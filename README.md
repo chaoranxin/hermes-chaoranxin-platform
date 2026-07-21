@@ -11,6 +11,9 @@
 mkdir -p ~/.hermes/plugins
 cp -R /path/to/hermes-chaoranxin-platform/chaoranxin ~/.hermes/plugins/chaoranxin
 
+# 或从 Release 解压压缩包
+# tar xzf chaoranxin-hermes-plugin-1.0.0.tgz -C ~/.hermes/plugins/
+
 # 2. 启用
 hermes plugins enable chaoranxin
 
@@ -45,3 +48,17 @@ hermes-chaoranxin-platform/
 4. 用户自备 LLM API Key，再按上文安装插件并启动 Gateway
 
 协议细节见 IM 文档：`im/docs/ROBOT_THIRD_PARTY.md`（含 Hermes 专节）。
+
+## Release 压缩包
+
+维护者在仓库根目录生成（勿提交 `.tgz`，作为 Release 附件上传）：
+
+```bash
+COPYFILE_DISABLE=1 tar czf chaoranxin-hermes-plugin-1.0.0.tgz \
+  --exclude='chaoranxin/__pycache__' \
+  --exclude='*.pyc' \
+  --exclude='.DS_Store' \
+  chaoranxin/
+```
+
+产物：`chaoranxin-hermes-plugin-1.0.0.tgz`（内含顶层目录 `chaoranxin/`）。
