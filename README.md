@@ -7,11 +7,11 @@
 ## 快速开始
 
 ```bash
-# 1. 只拷内层目录（不要拷本仓库根目录）
+# 1a. 只拷内层目录（不要拷本仓库根目录）
 mkdir -p ~/.hermes/plugins
 cp -R /path/to/hermes-chaoranxin-platform/chaoranxin ~/.hermes/plugins/chaoranxin
 
-# 或从 Release 解压压缩包
+# 1b. 或下载仓库根目录的压缩包后解压
 # tar xzf chaoranxin-hermes-plugin-1.0.0.tgz -C ~/.hermes/plugins/
 
 # 2. 启用
@@ -31,8 +31,9 @@ hermes gateway status  # 期望: chaoranxin: connected
 
 ```
 hermes-chaoranxin-platform/
-├── README.md                          # 本文件
-└── chaoranxin/                        # ← 安装时只复制这一层
+├── README.md
+├── chaoranxin-hermes-plugin-1.0.0.tgz  # 可直接下载解压安装
+└── chaoranxin/                         # ← 安装时只复制这一层
     ├── __init__.py
     ├── adapter.py
     ├── proto.py
@@ -49,9 +50,9 @@ hermes-chaoranxin-platform/
 
 协议细节见 IM 文档：`im/docs/ROBOT_THIRD_PARTY.md`（含 Hermes 专节）。
 
-## Release 压缩包
+## 压缩包
 
-维护者在仓库根目录生成（勿提交 `.tgz`，作为 Release 附件上传）：
+仓库根目录跟踪 [`chaoranxin-hermes-plugin-1.0.0.tgz`](chaoranxin-hermes-plugin-1.0.0.tgz)（内含顶层目录 `chaoranxin/`）。发版时重新生成并提交：
 
 ```bash
 COPYFILE_DISABLE=1 tar czf chaoranxin-hermes-plugin-1.0.0.tgz \
@@ -60,5 +61,3 @@ COPYFILE_DISABLE=1 tar czf chaoranxin-hermes-plugin-1.0.0.tgz \
   --exclude='.DS_Store' \
   chaoranxin/
 ```
-
-产物：`chaoranxin-hermes-plugin-1.0.0.tgz`（内含顶层目录 `chaoranxin/`）。
