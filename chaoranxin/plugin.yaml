@@ -1,0 +1,72 @@
+name: chaoranxin-platform
+label: Chaoranxin (超然信 rbt_* WS Bot)
+kind: platform
+version: 1.0.0
+description: >
+  Chaoranxin (超然信) custom WebSocket bot adapter for Hermes Agent.
+  Connects with a Bearer rbt_* token; the WS endpoint is either
+  auto-discovered via GET {api_base}/im/api/v1/robot/servers
+  (recommended — pick the first node) or set directly via
+  CHAORANXIN_HOST for single-node deployments.  Exchanges
+  plaintext JSON frames (Data<Msg> outbound, RobotLogin/RobotEvent/Status
+  inbound); the robot uuid is acquired from the RobotLogin frame
+  (§3.3) — no Login frame is sent.
+author: Chaoranxin contributors
+requires_env:
+  - name: CHAORANXIN_BOT_TOKEN
+    description: "Bot token (starts with rbt_).  Sent as Authorization: Bearer or X-Robot-Token header — never in URL query."
+    prompt: "Bot token"
+    password: true
+  - name: CHAORANXIN_API_BASE
+    description: "HTTP origin of the IM server (e.g. https://api.example.com).  The adapter calls GET {api_base}/im/api/v1/robot/servers on connect and dials the first returned node.  Set this OR CHAORANXIN_HOST — not both required."
+    prompt: "API base URL (e.g. https://api.example.com)"
+    password: false
+optional_env:
+  - name: CHAORANXIN_HOST
+    description: "Direct WS host (e.g. wss://api.example.com:9000).  Use this to skip the /im/api/v1/robot/servers lookup, e.g. for single-node deployments or to pin a specific node."
+    prompt: "Direct WS host (e.g. wss://api.example.com) — optional, overrides auto-discovery"
+    password: false
+  - name: CHAORANXIN_ROBOT_PATH
+    description: "WS path for the bot channel when using direct mode.  Default /robot.  Ignored when CHAORANXIN_API_BASE is set (the server's `robot` field from the node list wins)."
+    prompt: "Robot WS path (default /robot)"
+    password: false
+  - name: CHAORANXIN_BOT_ID
+    description: "Optional pre-handshake fallback for the robot uuid.  The real robot uuid comes from the RobotLogin frame (data.robot); this env var is only used during the brief window between connect() and the first RobotLogin receipt."
+    prompt: "Bot ID (optional — pre-handshake fallback)"
+    password: false
+  - name: CHAORANXIN_ALLOWED_USERS
+    description: "Comma-separated sender IDs allowed when CHAORANXIN_ALLOW_ALL_USERS=false.  Ignored while allow-all is on (default)."
+    prompt: "Allowed users (comma-separated, optional)"
+    password: false
+  - name: CHAORANXIN_ALLOW_ALL_USERS
+    description: "Allow any user to DM the bot (default true).  Set false and use CHAORANXIN_ALLOWED_USERS to restrict."
+    prompt: "Allow all users? (default true)"
+    password: false
+  - name: CHAORANXIN_HOME_CHANNEL
+    description: "Default chat_id for cron / notification delivery.  Auto-set from RobotLogin.data.owner when the gateway connects — do not configure manually unless overriding."
+    prompt: "Home chat ID (auto from RobotLogin — leave unset)"
+    password: false
+  - name: CHAORANXIN_HOME_CHANNEL_NAME
+    description: "Display name for the home channel."
+    prompt: "Home channel display name"
+    password: false
+  - name: CHAORANXIN_RECONNECT_MAX_SECONDS
+    description: "Max seconds between reconnect attempts (default 60)."
+    prompt: "Reconnect max seconds"
+    password: false
+  - name: CHAORANXIN_HEARTBEAT_INTERVAL
+    description: "Application-layer Heart frame interval in seconds (0 to disable, default 30).  Server idle timeout is 15 minutes."
+    prompt: "Heartbeat interval seconds"
+    password: false
+  - name: CHAORANXIN_MAX_MESSAGE_LENGTH
+    description: "Maximum text length per outbound message (default 8000)."
+    prompt: "Max message length"
+    password: false
+  - name: CHAORANXIN_STARTUP_MESSAGE
+    description: "Send the bot creator a DM when the gateway connects (default on).  Set false/0/off to disable."
+    prompt: "Send startup message to owner? (default on)"
+    password: false
+  - name: CHAORANXIN_STARTUP_MESSAGE_TEXT
+    description: "Custom startup message body.  Default: 超然信机器人已上线，Hermes Gateway 启动完成。"
+    prompt: "Startup message text (optional)"
+    password: false
