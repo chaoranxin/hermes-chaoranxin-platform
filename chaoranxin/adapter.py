@@ -1754,19 +1754,10 @@ class ChaoranxinAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _msg_type_for_clazz(clazz: str) -> MessageType:
-        """Map a (case-insensitive) inbound clazz to a Hermes MessageType.
-
-        v1's classifier:
-
-        * ``text`` / ``markdown`` / ``at``  → TEXT
-        * ``picture``                 → PHOTO
-        * ``video``                   → VIDEO
-        * ``voice``                   → VOICE
-        * ``file``                    → DOCUMENT
-        * ``article`` / ``url`` /
-          ``news`` / anything else    → DOCUMENT  (rich card)
-        """
+        """Map inbound clazz to Hermes MessageType (Multimodal uses parts)."""
         c = (clazz or "").lower()
+        if c == "multimodal":
+            return MessageType.TEXT
         if c in ("text", "markdown", "at"):
             return MessageType.TEXT
         if c == "picture":
@@ -1778,14 +1769,40 @@ class ChaoranxinAdapter(BasePlatformAdapter):
         return MessageType.DOCUMENT
 
     async def _deliver(self, env: RobotEventFrame) -> None:
-        """Build a ``MessageEvent`` and hand it to the gateway."""
-        msg_type = self._msg_type_for_clazz(env.clazz)
-        # ``text`` events are routed through ``text``; rich media events
-        # get their content preserved on the MessageEvent for downstream
-        # inspection (the agent layer decides what to do with it).
-        text = env.text if msg_type == MessageType.TEXT else ""
-        chat_type = "group" if env.chat_type in ("group", "chat", "channel") else "dm"
+        """Build a ``MessageEvent`` from Multimodal parts and hand to gateway.
 
+        Robot uplink is Multimodal-only (``msg_type=multimodal`` + non-empty
+        ``content.parts``). Legacy text/markdown/voice/picture inbound is
+        logged and dropped — no compatibility path.
+        """
+        if not env.is_multimodal:
+            logger.info(
+                "[chaoranxin] drop non-multimodal inbound msg_type=%s "
+                "parts=%d (uplink requires multimodal + parts)",
+                env.msg_type or "(empty)",
+                len(env.parts),
+            )
+            _trace(
+                "DISPATCH",
+                "drop: non-multimodal uplink",
+                msg_type=env.msg_type or None,
+                parts=len(env.parts),
+            )
+            return
+
+        from plugins.platforms.chaoranxin.multimodal import materialize_parts
+
+        materialized = await materialize_parts(env.parts)
+        text = materialized.final_text
+        if not text and not materialized.media_urls:
+            logger.info(
+                "[chaoranxin] multimodal event %s produced empty payload — drop",
+                env.message_id,
+            )
+            _trace("DISPATCH", "drop: empty multimodal materialization")
+            return
+
+        chat_type = "group" if env.chat_type in ("group", "chat", "channel") else "dm"
         source = self.build_source(
             chat_id=env.chat_id,
             chat_name=env.chat_id,
@@ -1800,23 +1817,25 @@ class ChaoranxinAdapter(BasePlatformAdapter):
         except (OSError, OverflowError, ValueError):
             timestamp = datetime.now(tz=timezone.utc)
 
-        # Preserve the raw envelope on the MessageEvent so the agent
-        # layer can inspect non-text content (Picture URL, Article body,
-        # At targets, etc.) without us needing a per-clazz field.
         event = MessageEvent(
-            text=text,
-            message_type=msg_type,
+            text=text or "",
+            message_type=materialized.message_type,
             source=source,
             message_id=env.message_id,
             raw_message={"robot_event": env.raw, "clazz": env.clazz},
             timestamp=timestamp,
+            media_urls=list(materialized.media_urls),
+            media_types=list(materialized.media_types),
         )
         logger.debug(
-            "[chaoranxin] event chat=%s sender=%s clazz=%s text=%r",
+            "[chaoranxin] event chat=%s sender=%s multimodal parts=%d "
+            "msg_type=%s text=%r media=%d",
             env.chat_id,
             env.sender_id,
-            env.clazz,
+            len(env.parts),
+            materialized.message_type.value,
             (text[:80] if text else None),
+            len(materialized.media_urls),
         )
         await self.handle_message(event)
         _trace(

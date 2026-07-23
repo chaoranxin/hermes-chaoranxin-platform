@@ -58,17 +58,21 @@ MSG_CLAZZ_AT = "At"
 MSG_CLAZZ_ARTICLE = "Article"
 MSG_CLAZZ_URL = "Url"
 MSG_CLAZZ_NEWS = "News"
+MSG_CLAZZ_MULTIMODAL = "Multimodal"
 
 #: All outbound content clazz values (top-level ``type`` must match ``clazz``).
+#: ``Multimodal`` is inbound-only for the robot uplink; listed so receipts
+#: that echo the clazz are recognized.
 MSG_CONTENT_CLAZZES = frozenset({
     MSG_CLAZZ_MARKDOWN, MSG_CLAZZ_TEXT, MSG_CLAZZ_PICTURE, MSG_CLAZZ_VIDEO,
     MSG_CLAZZ_FILE, MSG_CLAZZ_VOICE, MSG_CLAZZ_AT, MSG_CLAZZ_ARTICLE,
-    MSG_CLAZZ_URL, MSG_CLAZZ_NEWS,
+    MSG_CLAZZ_URL, MSG_CLAZZ_NEWS, MSG_CLAZZ_MULTIMODAL,
 })
 
 #: Map msg_type (inbound, lowercase) -> clazz (outbound, PascalCase).
 #: Per spec: ``Text``/``Markdown`` -> ``text``/``markdown``, other clazzes
-#: -> lowercase class name.
+#: -> lowercase class name.  Robot uplink is Multimodal-only (no legacy
+#: text/voice delivery); the map still names older clazzes for receipts.
 INBOUND_MSG_TYPE_TO_CLAZZ: Dict[str, str] = {
     "text": MSG_CLAZZ_TEXT,
     "markdown": MSG_CLAZZ_MARKDOWN,
@@ -80,6 +84,7 @@ INBOUND_MSG_TYPE_TO_CLAZZ: Dict[str, str] = {
     "article": MSG_CLAZZ_ARTICLE,
     "url": MSG_CLAZZ_URL,
     "news": MSG_CLAZZ_NEWS,
+    "multimodal": MSG_CLAZZ_MULTIMODAL,
 }
 
 
@@ -630,8 +635,8 @@ class RobotEventFrame:
 
     @property
     def msg_type(self) -> str:
-        """Inbound ``msg_type`` — lowercase per spec ("text", "picture", ...)."""
-        return str(self.message.get("msg_type") or "text")
+        """Inbound ``msg_type`` — lowercase (e.g. ``multimodal``)."""
+        return str(self.message.get("msg_type") or "").lower()
 
     @property
     def clazz(self) -> str:
@@ -640,13 +645,22 @@ class RobotEventFrame:
 
     @property
     def text(self) -> str:
-        """Inner ``content.text`` when msg_type is text — empty otherwise."""
+        """Legacy ``content.text`` — prefer :py:attr:`combined_text` for Multimodal."""
         return str(self.content_field("text") or "")
 
     @property
     def content(self) -> Dict[str, Any]:
         c = self.message.get("content")
-        return dict(c) if isinstance(c, dict) else {}
+        if isinstance(c, dict):
+            return dict(c)
+        if isinstance(c, str):
+            try:
+                parsed = json.loads(c)
+            except (TypeError, ValueError):
+                return {}
+            if isinstance(parsed, dict):
+                return dict(parsed)
+        return {}
 
     def content_field(self, key: str) -> Any:
         """Single key from ``content``, tolerant of stringified content.
@@ -654,17 +668,34 @@ class RobotEventFrame:
         Some clients wrap content as a JSON-encoded string; we accept
         either form and return the requested key.
         """
-        c = self.message.get("content")
-        if isinstance(c, dict):
-            return c.get(key)
-        if isinstance(c, str):
-            try:
-                parsed = json.loads(c)
-            except (TypeError, ValueError):
-                return None
-            if isinstance(parsed, dict):
-                return parsed.get(key)
-        return None
+        return self.content.get(key)
+
+    @property
+    def parts(self) -> list:
+        """Multimodal ``content.parts`` — empty list if missing/invalid."""
+        raw = self.content_field("parts")
+        if not isinstance(raw, list):
+            return []
+        return [p for p in raw if isinstance(p, dict)]
+
+    @property
+    def is_multimodal(self) -> bool:
+        """True when uplink is Multimodal with at least one part (delivery gate)."""
+        return self.msg_type == "multimodal" and bool(self.parts)
+
+    @property
+    def combined_text(self) -> str:
+        """Concatenate Multimodal ``text`` parts (joined by newlines)."""
+        chunks: list = []
+        for part in self.parts:
+            if str(part.get("type") or "").lower() != "text":
+                continue
+            t = part.get("text")
+            if t is None and isinstance(part.get("content"), str):
+                t = part.get("content")
+            if t is not None and str(t).strip():
+                chunks.append(str(t))
+        return "\n".join(chunks)
 
     @property
     def message_id(self) -> str:
@@ -724,7 +755,7 @@ __all__ = [
     # Constants
     "MSG_CLAZZ_MARKDOWN", "MSG_CLAZZ_TEXT", "MSG_CLAZZ_PICTURE", "MSG_CLAZZ_VIDEO",
     "MSG_CLAZZ_FILE", "MSG_CLAZZ_VOICE", "MSG_CLAZZ_AT",
-    "MSG_CLAZZ_ARTICLE", "MSG_CLAZZ_URL", "MSG_CLAZZ_NEWS",
+    "MSG_CLAZZ_ARTICLE", "MSG_CLAZZ_URL", "MSG_CLAZZ_NEWS", "MSG_CLAZZ_MULTIMODAL",
     "MSG_CONTENT_CLAZZES", "MSG_RECEIPT_SUBTYPES",
     "INBOUND_MSG_TYPE_TO_CLAZZ",
     "EVENT_MESSAGE_RECEIVE", "EVENT_BOT_ADDED", "EVENT_MESSAGE_READ",

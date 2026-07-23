@@ -137,8 +137,7 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 | Capability | Status |
 |---|---|
 | Auto node discovery (`GET /im/api/v1/robot/servers`) | ✅ with 1× retry on transport / non-2xx |
-| Inbound text messages | ✅ |
-| Inbound Picture / Article / Url / News / @-mention events | ✅ (forwarded as PHOTO / DOCUMENT / TEXT with raw envelope on `MessageEvent.raw_message`) |
+| Inbound Multimodal (text / voice_url / audio_url / image_url / video_url / file) | ✅ **only** uplink shape — legacy Text/Markdown/Voice/Picture inbound is dropped |
 | Outbound text messages | ✅ |
 | Outbound Picture | ✅ 先上传再发图片消息（与文字同通道） |
 | Outbound Article / Url / News | ✅ via `OutboundMsg.set_clazz()` (manual / programmatic) |
@@ -190,6 +189,36 @@ Quick summary:
     legacy `Msg` subtype; `status=100` accepted, `status=-1` rejected)
   - `RobotEvent` — user message.  Feishu-schema-2.0 envelope with
     `header.event_type = "im.message.receive_v1"`.
+    **Uplink must be Multimodal** (`msg_type: "multimodal"`,
+    `content.parts` non-empty). Legacy `text` / `markdown` / `voice` /
+    `picture` inbound is **not** accepted (logged and dropped).
+
+### Inbound Multimodal parts
+
+| Client capability | Entry | Part | Hermes |
+|---|---|---|---|
+| Plain text | Composer | `{ "type": "text", "text": "…" }` | user text |
+| Hold-to-talk | Mic | `{ "type": "voice_url", "voice_url": { "url": "…", "size": N } }` | STT (`VOICE`) |
+| Pick audio file | More panel | `{ "type": "audio_url", "audio_url": { "url": "…" } }` | attachment note, **no** STT |
+| Image / video / file | More panel | `image_url` / `video_url` / `file` | vision / path notes |
+
+Example:
+
+```json
+{
+  "msg_type": "multimodal",
+  "content": {
+    "parts": [
+      { "type": "text", "text": "请分析这些材料" },
+      { "type": "voice_url", "voice_url": { "url": "https://…/voice.ogg", "size": 12345 } },
+      { "type": "audio_url", "audio_url": { "url": "https://…/a.mp3" } },
+      { "type": "image_url", "image_url": { "url": "https://a", "detail": "auto" } },
+      { "type": "video_url", "video_url": { "url": "https://c.mp4" } },
+      { "type": "file", "file": { "url": "https://d.pdf", "filename": "a.pdf", "mime_type": "application/pdf" } }
+    ]
+  }
+}
+```
 
 ## Quick Start
 
