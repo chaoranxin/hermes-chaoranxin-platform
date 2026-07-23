@@ -9,6 +9,14 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 
 官方 [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) **不包含**本插件。每人需自行安装插件目录，并使用**各自**的 `rbt_*` token 与各自的 Hermes Gateway。
 
+### 开发与双仓同步（硬性）
+
+本目录在 Hermes 开发树中维护；**每次修改后必须**同步到分发仓并提交：
+
+`/Users/mac/Desktop/XsignServer/hermes-chaoranxin-platform`（只同步内层 `chaoranxin/`）
+
+完整步骤与自检见 **[`docs/plugin-sync.md`](../docs/plugin-sync.md)**。发图协议规范见 [`docs/outbound-picture.md`](../docs/outbound-picture.md)。
+
 ### 本目录需要哪些文件
 
 分发给用户时只需这 6 个文件（不要带 `__pycache__`）：
@@ -156,8 +164,8 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 
 ## Wire Protocol
 
-See upstream `ROBOT_THIRD_PARTY.md` and this repo's
-[`docs/outbound-picture.md`](../docs/outbound-picture.md) for Picture send.
+See `docs/chaoranxin/chaoranxin-platform.md` (or the upstream
+`ROBOT_THIRD_PARTY.md`) for the authoritative spec.
 
 Quick summary:
 

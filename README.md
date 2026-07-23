@@ -27,6 +27,7 @@ hermes gateway status  # 期望: chaoranxin: connected
 
 详细中文说明见 [`chaoranxin/README.md`](chaoranxin/README.md)。  
 出站图片规范见 [`docs/outbound-picture.md`](docs/outbound-picture.md)。
+双仓同步规范见 [`docs/plugin-sync.md`](docs/plugin-sync.md)。
 
 ## 仓库结构
 
@@ -34,7 +35,8 @@ hermes gateway status  # 期望: chaoranxin: connected
 hermes-chaoranxin-platform/
 ├── README.md
 ├── docs/
-│   └── outbound-picture.md             # 发图规范（插件自包含，不改 Hermes 核心）
+│   ├── outbound-picture.md             # 发图规范（插件自包含，不改 Hermes 核心）
+│   └── plugin-sync.md                  # 开发树 ↔ 本仓同步（每次改完必做）
 ├── chaoranxin-hermes-plugin-1.0.0.tgz  # 可直接下载解压安装
 └── chaoranxin/                         # ← 安装时只复制这一层
     ├── __init__.py
