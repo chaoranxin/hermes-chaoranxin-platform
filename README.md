@@ -2,12 +2,9 @@
 
 超然信（Chaoranxin）↔ [Hermes Agent](https://github.com/NousResearch/hermes-agent) 平台插件。
 
-官方 Hermes **不内置**本适配器。本仓库按 **方式 A（目录插件）** 分发：把内层 `chaoranxin/` 放到用户的 `~/.hermes/plugins/chaoranxin/`。
+官方 Hermes **不内置**本适配器。按 **方式 A（目录插件）** 安装：只把内层 `chaoranxin/` 放到 `~/.hermes/plugins/chaoranxin/`。
 
-## 文档规范（硬性）
-
-**本仓库文档只保留 README**（根目录本文件 + [`chaoranxin/README.md`](chaoranxin/README.md)）。  
-不要新增 `docs/` 目录或其它并列 `.md` 规范文件；规范写进 README。
+本仓库文档为**插件使用说明**（本文件 + [`chaoranxin/README.md`](chaoranxin/README.md)），不放开发/同步类规范。
 
 ## 快速开始
 
@@ -16,13 +13,13 @@
 mkdir -p ~/.hermes/plugins
 cp -R /path/to/hermes-chaoranxin-platform/chaoranxin ~/.hermes/plugins/chaoranxin
 
-# 1b. 或下载仓库根目录的压缩包后解压
+# 1b. 或下载压缩包后解压
 # tar xzf chaoranxin-hermes-plugin-1.0.0.tgz -C ~/.hermes/plugins/
 
 # 2. 启用
 hermes plugins enable chaoranxin
 
-# 3. 配置（需要超然信签发的 rbt_* + API base）
+# 3. 配置（超然信签发的 rbt_* + API base）
 hermes setup gateway   # 选择 Chaoranxin
 
 # 4. 启动
@@ -30,49 +27,35 @@ hermes gateway start --foreground
 hermes gateway status  # 期望: chaoranxin: connected
 ```
 
-安装细节、发图说明、能力矩阵见 [`chaoranxin/README.md`](chaoranxin/README.md)。
+更细的安装、配置、能力说明见 [`chaoranxin/README.md`](chaoranxin/README.md)。
 
 ## 仓库结构
 
 ```
 hermes-chaoranxin-platform/
-├── README.md                           # 本文件（仓级说明 + 同步）
-├── chaoranxin-hermes-plugin-1.0.0.tgz  # 可直接下载解压安装
+├── README.md                           # 仓级使用说明
+├── chaoranxin-hermes-plugin-1.0.0.tgz  # 可下载解压安装
 └── chaoranxin/                         # ← 安装时只复制这一层
     ├── __init__.py
     ├── adapter.py
     ├── media.py
     ├── proto.py
     ├── plugin.yaml
-    └── README.md                       # 插件说明（唯一插件文档）
+    └── README.md
 ```
 
-## 从 Hermes 开发树同步（硬性）
-
-在 Hermes 的 `plugins/platforms/chaoranxin/` 改代码后，**每次必须**同步到本仓并 commit：
-
-```bash
-SRC=/path/to/hermes-agent/plugins/platforms/chaoranxin
-DST=/path/to/hermes-chaoranxin-platform/chaoranxin
-cp "$SRC"/{__init__.py,adapter.py,proto.py,media.py,plugin.yaml,README.md} "$DST/"
-```
-
-然后按下方「压缩包」重建 tgz（发版建议）并 `git commit`。
-
-发图：upload（`bizType=im` + `PUBLIC`）后 WS `type=Picture`，与 Markdown 同通道；全部在插件内，**不要改 Hermes 核心**。
-
-## 控制台侧（给每个 Hermes 用户）
+## 你需要准备什么
 
 1. 在超然信官方客户端为该用户**创建机器人**
-2. 复制并安全交付 **`rbt_*` token**（通常只显示一次）
-3. 告知 **`CHAORANXIN_API_BASE`**（IM HTTP 根，如 `https://api.xsign.co`）
-4. 用户自备 LLM API Key，再按上文安装插件并启动 Gateway
+2. 拿到 **`rbt_*` token**（通常只显示一次）→ `CHAORANXIN_BOT_TOKEN`
+3. IM HTTP 根地址 → `CHAORANXIN_API_BASE`（如 `https://api.xsign.co`）
+4. 自备 LLM API Key（与超然信无关）
 
 协议细节见 IM 文档：`im/docs/ROBOT_THIRD_PARTY.md`（含 Hermes 专节）。
 
 ## 压缩包
 
-仓库根目录跟踪 [`chaoranxin-hermes-plugin-1.0.0.tgz`](chaoranxin-hermes-plugin-1.0.0.tgz)（内含顶层目录 `chaoranxin/`）。发版时重新生成并提交：
+根目录 [`chaoranxin-hermes-plugin-1.0.0.tgz`](chaoranxin-hermes-plugin-1.0.0.tgz) 内含顶层目录 `chaoranxin/`。重新打包：
 
 ```bash
 COPYFILE_DISABLE=1 tar czf chaoranxin-hermes-plugin-1.0.0.tgz \
