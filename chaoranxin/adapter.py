@@ -298,17 +298,13 @@ def _log_im_rx(raw: str) -> None:
 
 
 def _log_im_tx(frame_json: str) -> None:
-    """Log an outbound Msg wire frame at INFO (full JSON body)."""
-    if not frame_json:
-        return
-    nbytes = len(frame_json.encode("utf-8"))
-    logger.info(
-        "[chaoranxin] IM TX raw frame bytes=%d preview=%s",
-        nbytes,
-        frame_json,
-    )
-    preview = frame_json if len(frame_json) <= 240 else frame_json[:237] + "…"
-    _trace("TX", "raw frame", bytes=nbytes, preview=preview)
+    """Outbound Msg wire frame logging — intentionally a no-op.
+
+    Full-frame TX dumps (INFO + TRACE preview) leaked message bodies into
+    gateway logs; keep call sites for potential future debug hooks but do
+    not emit content here. Other TRACE categories are unchanged.
+    """
+    return
 
 
 def _build_handshake_headers(token: str) -> Dict[str, str]:
