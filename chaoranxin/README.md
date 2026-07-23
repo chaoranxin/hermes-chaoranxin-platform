@@ -11,7 +11,7 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 
 ### 本目录需要哪些文件
 
-分发给用户时只需这 5 个文件（不要带 `__pycache__`）：
+分发给用户时只需这 6 个文件（不要带 `__pycache__`）：
 
 | 文件 | 作用 |
 |------|------|
@@ -19,6 +19,7 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 | `__init__.py` | 导出 `register` |
 | `adapter.py` | 适配器主逻辑 |
 | `proto.py` | WS 帧编解码 |
+| `media.py` | 图片上传（`d.xsign.co` objectstorage） |
 | `README.md` | 本说明 |
 
 安装后目标路径：
@@ -28,6 +29,7 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 ├── __init__.py
 ├── adapter.py
 ├── proto.py
+├── media.py
 ├── plugin.yaml
 └── README.md
 ```
@@ -47,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scri
 ```bash
 mkdir -p ~/.hermes/plugins
 cp -R /path/to/hermes-chaoranxin-platform/chaoranxin ~/.hermes/plugins/chaoranxin
-ls ~/.hermes/plugins/chaoranxin/   # 应看到上述 5 个文件
+ls ~/.hermes/plugins/chaoranxin/   # 应看到上述 6 个文件
 ```
 
 **3. 启用插件**（用户插件不会自动加载）：
@@ -138,7 +140,9 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 | Inbound text messages | ✅ |
 | Inbound Picture / Article / Url / News / @-mention events | ✅ (forwarded as PHOTO / DOCUMENT / TEXT with raw envelope on `MessageEvent.raw_message`) |
 | Outbound text messages | ✅ |
-| Outbound Picture / Article / Url / News | ✅ via `OutboundMsg.set_clazz()` (manual / programmatic) |
+| Outbound Picture | ✅ plugin-local: upload then WS `type=Picture` (same channel as Markdown text; **no Hermes core changes**). Norm: [`docs/outbound-picture.md`](../docs/outbound-picture.md) |
+| Outbound Article / Url / News | ✅ via `OutboundMsg.set_clazz()` (manual / programmatic) |
+| Outbound Video / File / Voice | ❌ — not implemented yet |
 | Outbound @-mentions | ✅ via `OutboundMsg.ats` |
 | Reply quoting | ⚠️ **off by default** — opt in via `extra.send_quote: true` / `CHAORANXIN_SEND_QUOTE=true` |
 | RobotLogin handshake (§3.3) | ✅ (robot uuid + owner captured into `_robot_uuid`) |
@@ -152,8 +156,8 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 
 ## Wire Protocol
 
-See `docs/chaoranxin/chaoranxin-platform.md` (or the upstream
-`ROBOT_THIRD_PARTY.md`) for the authoritative spec.
+See upstream `ROBOT_THIRD_PARTY.md` and this repo's
+[`docs/outbound-picture.md`](../docs/outbound-picture.md) for Picture send.
 
 Quick summary:
 
@@ -176,7 +180,12 @@ Quick summary:
 * Outbound (top-level `type` = content clazz, must match `data.clazz`):
   - Text — `{type:"Markdown", data:{from,to,clazz:"Markdown",content:{text},role,quote,ats,uuid}}`
     (`quote` is **omitted by default**; see `extra.send_quote` below)
-  - Picture — `{type:"Picture", data:{clazz:"Picture", content:{smallurl,originurl,...}, ...}}`
+  - Picture — upload first (`POST {CHAORANXIN_FILE_BASE}/objectstorage/upload`,
+    default `https://d.xsign.co`), then
+    `{type:"Picture", data:{clazz:"Picture", content:{smallurl,originurl,...}, ...}}`
+    (`smallurl` and `originurl` must be the same `accessUrl`).
+    Same WS path as Markdown — implemented entirely in this plugin
+    (`send_image` / `send_image_file`); do **not** patch Hermes core.
   - `Data<Heart>` — `{type:"Heart", data:{time:<ms>}}`
 * Inbound:
   - `RobotLogin` — handshake binding (`ok`, `robot`, `owner`, `msg`)
@@ -227,6 +236,8 @@ platforms:
       # host: "wss://im-node-1.example.com" # OR direct mode
       # robot_path: "/robot"                # only used in direct mode
       bot_token: "rbt_xxxxxxxxxxxxxxxx"
+      # file_base: "https://d.xsign.co"         # Picture upload root (optional)
+      # send_quote: false                       # omit reply quote by default
       # bot_id: "bot_001"                  # optional, pre-handshake fallback
       # send_quote: false                   # default: do NOT include
                                           # ``quote`` in outbound reply

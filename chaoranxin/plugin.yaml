@@ -70,3 +70,7 @@ optional_env:
     description: "Custom startup message body.  Default: 超然信机器人已上线，Hermes Gateway 启动完成。"
     prompt: "Startup message text (optional)"
     password: false
+  - name: CHAORANXIN_FILE_BASE
+    description: "Object-storage root for Picture uploads (default https://d.xsign.co).  Adapter POSTs to {file_base}/objectstorage/upload with bizType=im and accessLevel=PUBLIC."
+    prompt: "File service base URL (default https://d.xsign.co)"
+    password: false

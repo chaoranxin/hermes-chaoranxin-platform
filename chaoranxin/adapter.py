@@ -50,6 +50,8 @@ Environment variables (env wins over ``extra``)::
                                       frames so the platform UI shows
                                       "Replying to <msg_id>". Default
                                       is "false" (no quote).
+    CHAORANXIN_FILE_BASE              Object-storage root for Picture
+                                      uploads (default https://d.xsign.co).
 """
 
 import asyncio
@@ -93,9 +95,18 @@ from gateway.platforms.base import (
 # registers this module under ``plugin_adapter_chaoranxin`` at the
 # top level, so a relative import would fail with
 # ``ImportError: attempted relative import with no known parent package``.
+from plugins.platforms.chaoranxin.media import (  # noqa: E402
+    IMAGE_EXTS,
+    build_picture_content,
+    is_file_service_oss_url,
+    is_image_path,
+    resolve_file_base,
+    upload_local_image,
+)
 from plugins.platforms.chaoranxin.proto import (  # noqa: E402
     EVENT_MESSAGE_RECEIVE,
     MSG_CLAZZ_MARKDOWN,
+    MSG_CLAZZ_PICTURE,
     TYPE_ROBOT_LOGIN,
     IncomingFrame,
     NodeEndpoint,
@@ -776,6 +787,8 @@ class ChaoranxinAdapter(BasePlatformAdapter):
         self._max_message_length: int = _env_int(
             "CHAORANXIN_MAX_MESSAGE_LENGTH", DEFAULT_MAX_MESSAGE_LENGTH
         )
+        # File service root for Picture uploads (default https://d.xsign.co).
+        self._file_base: str = resolve_file_base(extra)
 
         # Allowlist — open by default; set CHAORANXIN_ALLOW_ALL_USERS=false
         # and/or CHAORANXIN_ALLOWED_USERS to restrict.
@@ -1944,6 +1957,167 @@ class ChaoranxinAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=str(exc))
         return SendResult(success=True, message_id=msg.msg_id)
 
+    async def _send_picture_frame(
+        self,
+        chat_id: str,
+        access_url: str,
+        *,
+        reply_to: Optional[str] = None,
+        width: Optional[str] = None,
+        height: Optional[str] = None,
+    ) -> SendResult:
+        """Send a ``type=Picture`` WS frame using an already-uploaded accessUrl."""
+        ws = self._ws
+        if not self._ws_is_open(ws):
+            return SendResult(success=False, error="ws not connected")
+        from_robot = self._resolve_from_robot_uuid()
+        if not from_robot:
+            return SendResult(
+                success=False,
+                error="not logged in yet (RobotLogin handshake pending)",
+            )
+        try:
+            content = build_picture_content(
+                access_url, width=width, height=height
+            )
+        except ValueError as exc:
+            return SendResult(success=False, error=str(exc))
+
+        msg = OutboundMsg(to=chat_id, clazz=MSG_CLAZZ_PICTURE).set_clazz(
+            MSG_CLAZZ_PICTURE, content
+        )
+        if reply_to and self._send_quote:
+            msg.quote = reply_to
+        frame_json = msg.to_json(from_robot)
+        _log_im_tx(frame_json)
+        try:
+            await ws.send(frame_json)
+        except Exception as exc:
+            logger.warning("[chaoranxin] send_picture failed: %s", exc)
+            return SendResult(success=False, error=str(exc))
+        return SendResult(success=True, message_id=msg.msg_id)
+
+    async def send_image_file(
+        self,
+        chat_id: str,
+        image_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Upload a local image to object storage, then send a Picture frame.
+
+        Caption is sent as a separate Markdown message (Picture has no
+        caption field in the protocol).
+        """
+        del metadata, kwargs  # accepted for base-class contract
+        safe = self.validate_media_delivery_path(image_path)
+        if not safe:
+            return SendResult(
+                success=False,
+                error=f"unsafe or missing image path: {image_path}",
+            )
+        if not is_image_path(safe):
+            return SendResult(
+                success=False,
+                error=(
+                    f"chaoranxin send_image_file: unsupported image type "
+                    f"{Path(safe).suffix!r} (supported: {sorted(IMAGE_EXTS)})"
+                ),
+            )
+        if not self._bot_token:
+            return SendResult(success=False, error="missing bot token")
+
+        if caption and str(caption).strip():
+            cap_result = await self.send(
+                chat_id=chat_id,
+                content=str(caption).strip(),
+                reply_to=reply_to,
+            )
+            if not cap_result.success:
+                return cap_result
+
+        try:
+            access_url, width, height = await upload_local_image(
+                self._bot_token,
+                safe,
+                file_base=self._file_base,
+            )
+        except Exception as exc:
+            logger.warning("[chaoranxin] image upload failed: %s", exc)
+            return SendResult(success=False, error=str(exc))
+
+        return await self._send_picture_frame(
+            chat_id,
+            access_url,
+            reply_to=reply_to,
+            width=width,
+            height=height,
+        )
+
+    async def send_image(
+        self,
+        chat_id: str,
+        image_url: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send a remote image as a native Picture frame.
+
+        URLs already hosted on the configured file service ``/oss/{id}``
+        are sent directly.  Other http(s) URLs are downloaded (SSRF-safe)
+        then uploaded via :meth:`send_image_file`.
+        """
+        url = (image_url or "").strip()
+        if not url:
+            return SendResult(success=False, error="empty image_url")
+
+        if is_file_service_oss_url(url, self._file_base):
+            if caption and str(caption).strip():
+                cap_result = await self.send(
+                    chat_id=chat_id,
+                    content=str(caption).strip(),
+                    reply_to=reply_to,
+                    metadata=metadata,
+                )
+                if not cap_result.success:
+                    return cap_result
+            return await self._send_picture_frame(
+                chat_id, url, reply_to=reply_to
+            )
+
+        from tools.url_safety import is_safe_url
+
+        if not is_safe_url(url):
+            logger.warning(
+                "[chaoranxin] Blocked unsafe image URL during send_image"
+            )
+            return await super().send_image(
+                chat_id, image_url, caption, reply_to, metadata=metadata
+            )
+
+        try:
+            from gateway.platforms.base import cache_image_from_url
+
+            local_path = await cache_image_from_url(url)
+        except Exception as exc:
+            logger.warning(
+                "[chaoranxin] Failed to download image %s: %s", url, exc
+            )
+            return await super().send_image(
+                chat_id, image_url, caption, reply_to, metadata=metadata
+            )
+
+        return await self.send_image_file(
+            chat_id=chat_id,
+            image_path=local_path,
+            caption=caption,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
+
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """Chaoranxin v1 has no typing-indicator primitive."""
         return None
@@ -2007,21 +2181,27 @@ async def _standalone_send(
     message: str,
     *,
     thread_id: Optional[str] = None,
-    media_files: Optional[List[str]] = None,
+    media_files: Optional[List] = None,
     force_document: bool = False,
 ) -> Dict[str, Any]:
     """Out-of-process publish for cron / ``send_message_tool`` fallbacks.
 
     Used when ``hermes cron`` runs standalone (no gateway runner in
     this process).  Dials a one-shot WebSocket, awaits the RobotLogin
-    Status to learn the robot uuid, sends the message, and closes.
+    Status to learn the robot uuid, sends text + optional Picture
+    frames, and closes.
 
     Resolves the WS URL the same way the adapter does:
     * ``extra.host`` (or ``CHAORANXIN_HOST``) → dial directly
     * otherwise → call ``/im/api/v1/robot/servers`` against
       ``extra.api_base`` (or ``CHAORANXIN_API_BASE``) and dial the
       first node.
+
+    ``media_files`` entries are ``(path, is_voice)`` tuples (or bare
+    path strings).  Only image extensions are sent as Picture; other
+    attachments return an error (Video/File not in this release).
     """
+    del thread_id, force_document  # accepted for registry contract
     _trace("LIFECYCLE", "standalone_send enter", chars=len(message or ""))
     if not WEBSOCKETS_AVAILABLE:
         return {"error": "chaoranxin standalone send: websockets not installed"}
@@ -2033,6 +2213,7 @@ async def _standalone_send(
     ).rstrip("/")
     host, api_base = _normalize_endpoints(host, api_base)
     token = extra.get("bot_token") or _env("CHAORANXIN_BOT_TOKEN", "")
+    file_base = resolve_file_base(extra)
     robot_path = (
         extra.get("robot_path") or _env("CHAORANXIN_ROBOT_PATH", DEFAULT_ROBOT_PATH)
     ).strip() or DEFAULT_ROBOT_PATH
@@ -2056,23 +2237,53 @@ async def _standalone_send(
             "CHAORANXIN_HOME_CHANNEL are both empty"
         }
 
+    # Normalize media_files → list of local image paths.
+    image_paths: List[str] = []
+    for entry in media_files or []:
+        if isinstance(entry, (list, tuple)):
+            media_path = entry[0] if entry else ""
+        else:
+            media_path = entry
+        media_path = str(media_path or "").strip()
+        if not media_path:
+            continue
+        safe = BasePlatformAdapter.validate_media_delivery_path(media_path)
+        if not safe:
+            return {"error": f"chaoranxin standalone send: unsafe media path: {media_path}"}
+        if not is_image_path(safe):
+            return {
+                "error": (
+                    "chaoranxin standalone send: only image attachments are "
+                    f"supported (got {Path(safe).suffix!r}); "
+                    "Video/File/Voice are not implemented yet"
+                )
+            }
+        if not Path(safe).is_file():
+            return {"error": f"chaoranxin standalone send: media file not found: {safe}"}
+        image_paths.append(safe)
+
+    if not (message or "").strip() and not image_paths:
+        return {
+            "error": "No deliverable text or media remained after processing MEDIA tags"
+        }
+
     cap = _env_int("CHAORANXIN_MAX_MESSAGE_LENGTH", DEFAULT_MAX_MESSAGE_LENGTH)
     if cap <= 0:
         cap = DEFAULT_MAX_MESSAGE_LENGTH
     truncated = False
-    if len(message) > cap:
+    text = message or ""
+    if len(text) > cap:
         truncated = True
-        message = message[:cap]
+        text = text[:cap]
 
-    msg = OutboundMsg(to=target, text=message or "", clazz=MSG_CLAZZ_MARKDOWN)
     headers = _build_handshake_headers(token)
 
     _trace(
         "TX",
         "standalone_send prepared",
         target=target,
-        msg_id=msg.msg_id,
         truncated=truncated,
+        images=len(image_paths),
         token=_mask_token(token),
     )
 
@@ -2092,6 +2303,7 @@ async def _standalone_send(
                 "error": f"chaoranxin standalone send: discovered node unusable: {exc}"
             }
 
+    last_msg_id: Optional[str] = None
     _trace("WS", "standalone_send dial", url=url)
     try:
         async with websockets.connect(
@@ -2132,9 +2344,35 @@ async def _standalone_send(
                     "error": "chaoranxin standalone send: no robot uuid "
                     "(handshake did not deliver one and no fallback configured)"
                 }
-            frame_json = msg.to_json(robot_uuid)
-            _log_im_tx(frame_json)
-            await ws.send(frame_json)
+
+            if text.strip():
+                msg = OutboundMsg(
+                    to=target, text=text, clazz=MSG_CLAZZ_MARKDOWN
+                )
+                frame_json = msg.to_json(robot_uuid)
+                _log_im_tx(frame_json)
+                await ws.send(frame_json)
+                last_msg_id = msg.msg_id
+
+            for image_path in image_paths:
+                try:
+                    access_url, width, height = await upload_local_image(
+                        token, image_path, file_base=file_base
+                    )
+                except Exception as exc:
+                    return {
+                        "error": f"chaoranxin standalone send image upload failed: {exc}"
+                    }
+                content = build_picture_content(
+                    access_url, width=width, height=height
+                )
+                pic = OutboundMsg(to=target).set_clazz(
+                    MSG_CLAZZ_PICTURE, content
+                )
+                frame_json = pic.to_json(robot_uuid)
+                _log_im_tx(frame_json)
+                await ws.send(frame_json)
+                last_msg_id = pic.msg_id
     except websockets.exceptions.InvalidStatus as exc:
         status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
         _trace("ERROR", "standalone_send: InvalidStatus", url=url, http_status=status)
@@ -2153,13 +2391,14 @@ async def _standalone_send(
         "TX",
         "standalone_send done",
         target=target,
-        msg_id=msg.msg_id,
+        msg_id=last_msg_id,
+        images=len(image_paths),
     )
     return {
         "success": True,
         "platform": "chaoranxin",
         "chat_id": target,
-        "message_id": msg.msg_id,
+        "message_id": last_msg_id,
     }
 
 
@@ -2186,6 +2425,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
         "bot_token": "CHAORANXIN_BOT_TOKEN",
         "robot_path": "CHAORANXIN_ROBOT_PATH",
         "bot_id": "CHAORANXIN_BOT_ID",
+        "file_base": "CHAORANXIN_FILE_BASE",
     }
     for yaml_key, env_key in env_keys.items():
         if yaml_key in platform_cfg and not os.getenv(env_key):
@@ -2407,8 +2647,8 @@ def register(ctx) -> None:
             "Plaintext JSON frames on the /robot path; the handshake "
             "(RobotLogin frame) is automatic after the Bearer-token WS "
             "upgrade — do not send a Login frame.  Use plain text by "
-            "default; picture / article / @ / url / news cards are "
-            "supported via send_image / send_document / custom messages.  "
+            "default; images are delivered natively via send_image "
+            "(upload to object storage then Picture frames).  "
             f"Keep responses under {DEFAULT_MAX_MESSAGE_LENGTH} "
             "characters per message; longer text will be truncated."
         ),

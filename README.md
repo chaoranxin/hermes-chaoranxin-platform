@@ -25,21 +25,37 @@ hermes gateway start --foreground
 hermes gateway status  # 期望: chaoranxin: connected
 ```
 
-详细中文说明见 [`chaoranxin/README.md`](chaoranxin/README.md)。
+详细中文说明见 [`chaoranxin/README.md`](chaoranxin/README.md)。  
+出站图片规范见 [`docs/outbound-picture.md`](docs/outbound-picture.md)。
 
 ## 仓库结构
 
 ```
 hermes-chaoranxin-platform/
 ├── README.md
+├── docs/
+│   └── outbound-picture.md             # 发图规范（插件自包含，不改 Hermes 核心）
 ├── chaoranxin-hermes-plugin-1.0.0.tgz  # 可直接下载解压安装
 └── chaoranxin/                         # ← 安装时只复制这一层
     ├── __init__.py
     ├── adapter.py
+    ├── media.py                        # objectstorage 上传
     ├── proto.py
     ├── plugin.yaml
     └── README.md
 ```
+
+## 从 Hermes 开发树同步
+
+若在 Hermes 检出的 `plugins/platforms/chaoranxin/` 中开发，**每次修改后**同步到本仓库再提交：
+
+```bash
+SRC=/path/to/hermes-agent/plugins/platforms/chaoranxin
+DST=/path/to/hermes-chaoranxin-platform/chaoranxin
+cp "$SRC"/{__init__.py,adapter.py,proto.py,media.py,plugin.yaml,README.md} "$DST/"
+```
+
+然后按下方「压缩包」重建 tgz（可选）并 `git commit`。
 
 ## 控制台侧（给每个 Hermes 用户）
 
