@@ -4,6 +4,11 @@
 
 官方 Hermes **不内置**本适配器。本仓库按 **方式 A（目录插件）** 分发：把内层 `chaoranxin/` 放到用户的 `~/.hermes/plugins/chaoranxin/`。
 
+## 文档规范（硬性）
+
+**本仓库文档只保留 README**（根目录本文件 + [`chaoranxin/README.md`](chaoranxin/README.md)）。  
+不要新增 `docs/` 目录或其它并列 `.md` 规范文件；规范写进 README。
+
 ## 快速开始
 
 ```bash
@@ -25,31 +30,26 @@ hermes gateway start --foreground
 hermes gateway status  # 期望: chaoranxin: connected
 ```
 
-详细中文说明见 [`chaoranxin/README.md`](chaoranxin/README.md)。  
-出站图片规范见 [`docs/outbound-picture.md`](docs/outbound-picture.md)。
-双仓同步规范见 [`docs/plugin-sync.md`](docs/plugin-sync.md)。
+安装细节、发图说明、能力矩阵见 [`chaoranxin/README.md`](chaoranxin/README.md)。
 
 ## 仓库结构
 
 ```
 hermes-chaoranxin-platform/
-├── README.md
-├── docs/
-│   ├── outbound-picture.md             # 发图规范（插件自包含，不改 Hermes 核心）
-│   └── plugin-sync.md                  # 开发树 ↔ 本仓同步（每次改完必做）
+├── README.md                           # 本文件（仓级说明 + 同步）
 ├── chaoranxin-hermes-plugin-1.0.0.tgz  # 可直接下载解压安装
 └── chaoranxin/                         # ← 安装时只复制这一层
     ├── __init__.py
     ├── adapter.py
-    ├── media.py                        # objectstorage 上传
+    ├── media.py
     ├── proto.py
     ├── plugin.yaml
-    └── README.md
+    └── README.md                       # 插件说明（唯一插件文档）
 ```
 
-## 从 Hermes 开发树同步
+## 从 Hermes 开发树同步（硬性）
 
-若在 Hermes 检出的 `plugins/platforms/chaoranxin/` 中开发，**每次修改后**同步到本仓库再提交：
+在 Hermes 的 `plugins/platforms/chaoranxin/` 改代码后，**每次必须**同步到本仓并 commit：
 
 ```bash
 SRC=/path/to/hermes-agent/plugins/platforms/chaoranxin
@@ -57,7 +57,9 @@ DST=/path/to/hermes-chaoranxin-platform/chaoranxin
 cp "$SRC"/{__init__.py,adapter.py,proto.py,media.py,plugin.yaml,README.md} "$DST/"
 ```
 
-然后按下方「压缩包」重建 tgz（可选）并 `git commit`。
+然后按下方「压缩包」重建 tgz（发版建议）并 `git commit`。
+
+发图：upload（`bizType=im` + `PUBLIC`）后 WS `type=Picture`，与 Markdown 同通道；全部在插件内，**不要改 Hermes 核心**。
 
 ## 控制台侧（给每个 Hermes 用户）
 

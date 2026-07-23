@@ -9,13 +9,31 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 
 官方 [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) **不包含**本插件。每人需自行安装插件目录，并使用**各自**的 `rbt_*` token 与各自的 Hermes Gateway。
 
+### 文档规范（硬性）
+
+**只保留本 `README.md`（及分发仓根 `README.md`），不要再新增其它 `.md` 文档。**  
+规范（同步、发图、安装）一律写进 README，勿建 `docs/` 子目录或并列规范文件。
+
 ### 开发与双仓同步（硬性）
 
-本目录在 Hermes 开发树中维护；**每次修改后必须**同步到分发仓并提交：
+本目录在 Hermes 开发树中维护；**每次修改后必须**同步到分发仓并提交。
 
-`/Users/mac/Desktop/XsignServer/hermes-chaoranxin-platform`（只同步内层 `chaoranxin/`）
+| 角色 | 路径 |
+|------|------|
+| 开发树 | Hermes：`plugins/platforms/chaoranxin/` |
+| 分发仓 | `/Users/mac/Desktop/XsignServer/hermes-chaoranxin-platform` 内层 `chaoranxin/` |
 
-完整步骤与自检见 **[`docs/plugin-sync.md`](../docs/plugin-sync.md)**。发图协议规范见 [`docs/outbound-picture.md`](../docs/outbound-picture.md)。
+```bash
+SRC=plugins/platforms/chaoranxin   # 在 Hermes 仓库根执行
+DST=/Users/mac/Desktop/XsignServer/hermes-chaoranxin-platform/chaoranxin
+cp "$SRC"/{__init__.py,adapter.py,proto.py,media.py,plugin.yaml,README.md} "$DST/"
+
+cd /Users/mac/Desktop/XsignServer/hermes-chaoranxin-platform
+# 发版时建议重建 tgz，见分发仓根 README
+git add chaoranxin/ && git commit -m "sync(chaoranxin): <简述>"
+```
+
+发图与发文字同为 WS JSON 帧（先 `POST {CHAORANXIN_FILE_BASE}/objectstorage/upload`，`bizType=im` + `PUBLIC`，再发 `type=Picture`）；**全部在本插件内实现，禁止改 Hermes 核心**（如 `send_message_tool.py`）。
 
 ### 本目录需要哪些文件
 
@@ -148,7 +166,7 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 | Inbound text messages | ✅ |
 | Inbound Picture / Article / Url / News / @-mention events | ✅ (forwarded as PHOTO / DOCUMENT / TEXT with raw envelope on `MessageEvent.raw_message`) |
 | Outbound text messages | ✅ |
-| Outbound Picture | ✅ plugin-local: upload then WS `type=Picture` (same channel as Markdown text; **no Hermes core changes**). Norm: [`docs/outbound-picture.md`](../docs/outbound-picture.md) |
+| Outbound Picture | ✅ plugin-local: upload then WS `type=Picture`（与 Markdown 同通道；不改 Hermes 核心） |
 | Outbound Article / Url / News | ✅ via `OutboundMsg.set_clazz()` (manual / programmatic) |
 | Outbound Video / File / Voice | ❌ — not implemented yet |
 | Outbound @-mentions | ✅ via `OutboundMsg.ats` |
@@ -164,8 +182,9 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 
 ## Wire Protocol
 
-See `docs/chaoranxin/chaoranxin-platform.md` (or the upstream
-`ROBOT_THIRD_PARTY.md`) for the authoritative spec.
+Authoritative bot protocol: upstream `ROBOT_THIRD_PARTY.md`. Wire notes for
+Hermes maintainers may also live under `docs/chaoranxin/` in the Hermes tree;
+**the distributable plugin repo keeps documentation in README only.**
 
 Quick summary:
 
