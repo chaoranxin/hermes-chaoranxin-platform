@@ -155,7 +155,7 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 | Fatal-on-handshake-error (401/403/404) | ✅ |
 | HTTP push (`/bot/api/v1/message/push`) | ❌ — not implemented in v1 (out of scope: WS-only mode) |
 | HTTP Hook callback (HMAC-SHA256) | ❌ — not implemented in v1 (out of scope: WS-only mode) |
-| Tappable approval / clarify buttons | ❌ falls back to text (no interactive UI primitive in spec) |
+| ActionCard (approval / clarify / slash-confirm) | ✅ 出站 `type=ActionCard`；入站 `msg_type=actioncard` + `selected`/`quote` → `resolve_*`（**不当**普通对话）。三层协议见 Hermes 树 `docs/chaoranxin/action-card-wire-protocol.md`。需 IM/App 渲染与点击桥接；未就绪时 Gateway 可回退纯文本 |
 
 ## Wire Protocol
 
@@ -194,6 +194,16 @@ Quick summary:
     (`video` = `accessUrl`; `cover` may be `""`. Do **not** send `type:"Video"`.)
   - LocalFile — same upload, then
     `{type:"LocalFile", data:{clazz:"LocalFile", content:{fileurl, filename, filesize}, ...}}`
+  - ActionCard — interactive buttons for approval / clarify / slash-confirm
+    (layer ②). Outbound:
+    `{type:"ActionCard", data:{clazz:"ActionCard", role:"robot", content:{title?, text, buttons[][]}}}`.
+    `Button.data` carries opaque `ea:` / `cl:` / `sc:` callbacks.
+    Inbound tap (IM bridge): `msg_type=actioncard` + `content.selected` +
+    `quote` → plugin calls Hermes `resolve_*` (**not** a chat turn).
+    Full three-layer spec (do not mix ①/②/③): Hermes tree
+    `docs/chaoranxin/action-card-wire-protocol.md`.
+    Requires IM/App to render cards and bridge clicks; without that,
+    Gateway may fall back to text `/approve`.
     (`filesize` is a JSON **integer**. Do **not** send `type:"File"`.)
   - `Data<Heart>` — `{type:"Heart", data:{time:<ms>}}`
 * Inbound:

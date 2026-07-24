@@ -55,6 +55,7 @@ Environment variables (env wins over ``extra``)::
 """
 
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -110,6 +111,7 @@ from plugins.platforms.chaoranxin.media import (  # noqa: E402
 )
 from plugins.platforms.chaoranxin.proto import (  # noqa: E402
     EVENT_MESSAGE_RECEIVE,
+    MSG_CLAZZ_ACTION_CARD,
     MSG_CLAZZ_LOCAL_FILE,
     MSG_CLAZZ_LOCAL_VIDEO,
     MSG_CLAZZ_MARKDOWN,
@@ -123,6 +125,8 @@ from plugins.platforms.chaoranxin.proto import (  # noqa: E402
     RobotEventFrame,
     RobotLoginFrame,
     StatusFrame,
+    build_action_card_button,
+    build_action_card_content,
     parse_node_list,
 )
 
@@ -836,6 +840,13 @@ class ChaoranxinAdapter(BasePlatformAdapter):
 
         # Dedup cache: event_id -> last_seen_unix
         self._seen_event_ids: "OrderedDict[str, float]" = OrderedDict()
+
+        # ActionCard interactive prompts (layer ①↔②). Callback payloads use
+        # ea: / cl: / sc: in Button.data — same opaque strings as Telegram.
+        self._approval_counter = itertools.count(1)
+        self._approval_state: Dict[int, str] = {}
+        self._slash_confirm_state: Dict[str, str] = {}
+        self._clarify_state: Dict[str, str] = {}
 
         # Set by :meth:`connect` and completed by RobotLogin (or fatal error).
         self._handshake_done: Optional[asyncio.Future] = None
@@ -1720,6 +1731,12 @@ class ChaoranxinAdapter(BasePlatformAdapter):
             )
             return
 
+        # ActionCard tap (layer ②) — resolve approval/clarify/slash; never
+        # treat as a Multimodal chat turn (would wake the agent wrongly).
+        if env.is_actioncard_tap:
+            await self._handle_actioncard_tap(env)
+            return
+
         await self._deliver(env)
 
     def _is_duplicate(self, event_id: str) -> bool:
@@ -1991,6 +2008,326 @@ class ChaoranxinAdapter(BasePlatformAdapter):
             )
             return SendResult(success=False, error=str(exc))
         return SendResult(success=True, message_id=msg.msg_id)
+
+    # ----- ActionCard (approval / clarify / slash-confirm) -----
+
+    async def _send_action_card(
+        self,
+        chat_id: str,
+        *,
+        title: str,
+        text: str,
+        buttons: List[List[Dict[str, Any]]],
+    ) -> SendResult:
+        """Send a layer-② ActionCard content-type frame."""
+        try:
+            content = build_action_card_content(
+                title=title, text=text, buttons=buttons
+            )
+        except ValueError as exc:
+            return SendResult(success=False, error=str(exc))
+        return await self._send_clazz_frame(
+            chat_id, MSG_CLAZZ_ACTION_CARD, content
+        )
+
+    async def send_exec_approval(
+        self,
+        chat_id: str,
+        command: str,
+        session_key: str,
+        description: str = "dangerous command",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send an ActionCard approval prompt (``ea:choice:id`` callbacks)."""
+        _ = metadata
+        approval_id = next(self._approval_counter)
+        cmd_preview = command[:3800] + "..." if len(command) > 3800 else command
+        text = (
+            f"将执行危险命令：\n```\n{cmd_preview}\n```\n\n"
+            f"原因：{description}\n\n请选择："
+        )
+        buttons = [
+            [
+                build_action_card_button(
+                    "once", "允许一次", f"ea:once:{approval_id}", "primary"
+                ),
+                build_action_card_button(
+                    "session", "本会话允许", f"ea:session:{approval_id}", "primary"
+                ),
+            ],
+            [
+                build_action_card_button(
+                    "always", "始终允许", f"ea:always:{approval_id}", "default"
+                ),
+                build_action_card_button(
+                    "deny", "拒绝", f"ea:deny:{approval_id}", "danger"
+                ),
+            ],
+        ]
+        result = await self._send_action_card(
+            chat_id,
+            title="需要确认",
+            text=text,
+            buttons=buttons,
+        )
+        if result.success:
+            self._approval_state[approval_id] = session_key
+        else:
+            logger.warning(
+                "[chaoranxin] send_exec_approval failed: %s", result.error
+            )
+        return result
+
+    async def send_slash_confirm(
+        self,
+        chat_id: str,
+        title: str,
+        message: str,
+        session_key: str,
+        confirm_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send an ActionCard slash-command confirmation (``sc:`` callbacks)."""
+        _ = metadata
+        preview = message if len(message) <= 3800 else message[:3800] + "..."
+        buttons = [
+            [
+                build_action_card_button(
+                    "once", "批准一次", f"sc:once:{confirm_id}", "primary"
+                ),
+                build_action_card_button(
+                    "always", "始终批准", f"sc:always:{confirm_id}", "primary"
+                ),
+            ],
+            [
+                build_action_card_button(
+                    "cancel", "取消", f"sc:cancel:{confirm_id}", "danger"
+                ),
+            ],
+        ]
+        result = await self._send_action_card(
+            chat_id,
+            title=title or "确认操作",
+            text=preview,
+            buttons=buttons,
+        )
+        if result.success:
+            self._slash_confirm_state[confirm_id] = session_key
+        else:
+            logger.warning(
+                "[chaoranxin] send_slash_confirm failed: %s", result.error
+            )
+        return result
+
+    async def send_clarify(
+        self,
+        chat_id: str,
+        question: str,
+        choices: Optional[list],
+        clarify_id: str,
+        session_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send an ActionCard clarify prompt (``cl:`` callbacks).
+
+        Open-ended (no choices): fall back to plain Markdown text so the
+        gateway text-intercept can capture the next message.
+        """
+        _ = metadata
+        if not choices:
+            text = f"❓ {question}"
+            result = await self.send(chat_id, text)
+            if result.success:
+                self._clarify_state[clarify_id] = session_key
+            return result
+
+        # Body lists full option text; buttons keep short labels (≤20).
+        # Cap at 8 choice buttons + Other = 9 (ACTION_CARD_MAX_BUTTONS).
+        shown = list(choices)[:8]
+        option_lines = "\n".join(
+            f"{i + 1}. {c}" for i, c in enumerate(choices)
+        )
+        text = f"{question}\n\n{option_lines}"
+        if len(choices) > 8:
+            text += "\n\n（前 8 项可点选，其余请选「其他」后输入）"
+        buttons: List[List[Dict[str, Any]]] = []
+        for idx, choice in enumerate(shown):
+            label = str(choice).strip() or f"选项 {idx + 1}"
+            if len(label) > 20:
+                label = f"{idx + 1}. {label[:16]}…"
+            buttons.append([
+                build_action_card_button(
+                    f"c{idx}",
+                    label,
+                    f"cl:{clarify_id}:{idx}",
+                    "default",
+                )
+            ])
+        buttons.append([
+            build_action_card_button(
+                "other",
+                "其他（输入）",
+                f"cl:{clarify_id}:other",
+                "default",
+            )
+        ])
+        result = await self._send_action_card(
+            chat_id,
+            title="请选择",
+            text=text,
+            buttons=buttons,
+        )
+        if result.success:
+            self._clarify_state[clarify_id] = session_key
+        else:
+            logger.warning(
+                "[chaoranxin] send_clarify failed: %s", result.error
+            )
+        return result
+
+    async def _handle_actioncard_tap(self, env: RobotEventFrame) -> None:
+        """Resolve an ActionCard tap without waking a chat turn."""
+        selected = env.actioncard_selected
+        data = str(selected.get("data") or "")
+        chat_id = env.chat_id
+        _trace(
+            "DISPATCH",
+            "actioncard tap",
+            chat_id=chat_id,
+            quote=env.quote or None,
+            selected_id=selected.get("id"),
+            callback=data[:80] if data else None,
+        )
+        if data.startswith("ea:"):
+            await self._resolve_actioncard_ea(data, chat_id)
+        elif data.startswith("sc:"):
+            await self._resolve_actioncard_sc(data, chat_id)
+        elif data.startswith("cl:"):
+            await self._resolve_actioncard_cl(data)
+        else:
+            logger.warning(
+                "[chaoranxin] ActionCard tap with unknown callback data=%r "
+                "quote=%s",
+                data[:120],
+                env.quote,
+            )
+
+    async def _resolve_actioncard_ea(self, data: str, chat_id: str) -> None:
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            return
+        choice = parts[1]
+        try:
+            approval_id = int(parts[2])
+        except (ValueError, TypeError):
+            return
+        session_key = self._approval_state.pop(approval_id, None)
+        if not session_key:
+            logger.info(
+                "[chaoranxin] ActionCard approval already resolved id=%s",
+                approval_id,
+            )
+            return
+        try:
+            from tools.approval import resolve_gateway_approval
+
+            count = resolve_gateway_approval(session_key, choice)
+            logger.info(
+                "[chaoranxin] ActionCard resolved %d approval(s) "
+                "session=%s choice=%s",
+                count,
+                session_key,
+                choice,
+            )
+        except Exception as exc:
+            logger.error(
+                "[chaoranxin] resolve_gateway_approval failed: %s", exc
+            )
+            count = 0
+        if count and chat_id:
+            self.resume_typing_for_chat(str(chat_id))
+
+    async def _resolve_actioncard_sc(self, data: str, chat_id: str) -> None:
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            return
+        choice = parts[1]
+        confirm_id = parts[2]
+        session_key = self._slash_confirm_state.pop(confirm_id, None)
+        if not session_key:
+            logger.info(
+                "[chaoranxin] ActionCard slash-confirm already resolved id=%s",
+                confirm_id,
+            )
+            return
+        try:
+            from tools import slash_confirm as _slash_confirm_mod
+
+            result_text = await _slash_confirm_mod.resolve(
+                session_key, confirm_id, choice
+            )
+            if result_text and chat_id:
+                await self.send(chat_id, str(result_text))
+        except Exception as exc:
+            logger.error(
+                "[chaoranxin] slash-confirm ActionCard failed: %s",
+                exc,
+                exc_info=True,
+            )
+
+    async def _resolve_actioncard_cl(self, data: str) -> None:
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            return
+        clarify_id = parts[1]
+        choice_token = parts[2]
+        session_key = self._clarify_state.get(clarify_id)
+        if not session_key:
+            logger.info(
+                "[chaoranxin] ActionCard clarify already resolved id=%s",
+                clarify_id,
+            )
+            return
+        if choice_token == "other":
+            try:
+                from tools.clarify_gateway import mark_awaiting_text
+
+                mark_awaiting_text(clarify_id)
+            except Exception as exc:
+                logger.warning(
+                    "[chaoranxin] mark_awaiting_text failed: %s", exc
+                )
+            return
+        try:
+            idx = int(choice_token)
+        except (ValueError, TypeError):
+            return
+        resolved_text: Optional[str] = None
+        try:
+            from tools.clarify_gateway import _entries as _clarify_entries  # type: ignore
+
+            entry = _clarify_entries.get(clarify_id)
+            if entry and entry.choices and 0 <= idx < len(entry.choices):
+                resolved_text = entry.choices[idx]
+        except Exception:
+            resolved_text = None
+        if resolved_text is None:
+            resolved_text = f"choice {idx + 1}"
+        self._clarify_state.pop(clarify_id, None)
+        try:
+            from tools.clarify_gateway import resolve_gateway_clarify
+
+            ok = resolve_gateway_clarify(clarify_id, resolved_text)
+            logger.info(
+                "[chaoranxin] ActionCard clarify resolved id=%s choice=%r ok=%s",
+                clarify_id,
+                resolved_text,
+                ok,
+            )
+        except Exception as exc:
+            logger.error(
+                "[chaoranxin] resolve_gateway_clarify failed: %s", exc
+            )
 
     async def _send_clazz_frame(
         self,

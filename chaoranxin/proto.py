@@ -61,22 +61,30 @@ MSG_CLAZZ_ARTICLE = "Article"
 MSG_CLAZZ_URL = "Url"
 MSG_CLAZZ_NEWS = "News"
 MSG_CLAZZ_MULTIMODAL = "Multimodal"
+MSG_CLAZZ_ACTION_CARD = "ActionCard"
+
+#: Max buttons on one ActionCard (IM / App constraint).
+ACTION_CARD_MAX_BUTTONS = 9
 
 #: All outbound content clazz values (top-level ``type`` must match ``clazz``).
 #: ``Multimodal`` is inbound-only for the robot uplink; listed so receipts
 #: that echo the clazz are recognized. ``LocalVideo`` / ``LocalFile`` are
 #: the platform IM types for robot media outbound (not ``Video`` / ``File``).
+#: ``ActionCard`` is interactive approval / clarify / slash-confirm.
 MSG_CONTENT_CLAZZES = frozenset({
     MSG_CLAZZ_MARKDOWN, MSG_CLAZZ_TEXT, MSG_CLAZZ_PICTURE, MSG_CLAZZ_VIDEO,
     MSG_CLAZZ_FILE, MSG_CLAZZ_LOCAL_VIDEO, MSG_CLAZZ_LOCAL_FILE,
     MSG_CLAZZ_VOICE, MSG_CLAZZ_AT, MSG_CLAZZ_ARTICLE,
     MSG_CLAZZ_URL, MSG_CLAZZ_NEWS, MSG_CLAZZ_MULTIMODAL,
+    MSG_CLAZZ_ACTION_CARD,
 })
 
 #: Map msg_type (inbound, lowercase) -> clazz (outbound, PascalCase).
 #: Per spec: ``Text``/``Markdown`` -> ``text``/``markdown``, other clazzes
 #: -> lowercase class name.  Robot uplink is Multimodal-only (no legacy
 #: text/voice delivery); the map still names older clazzes for receipts.
+#: ``actioncard`` is the IM→robot bridge for ActionCard tap receipts
+#: (orthogonal to Multimodal chat — see action-card-wire-protocol.md).
 INBOUND_MSG_TYPE_TO_CLAZZ: Dict[str, str] = {
     "text": MSG_CLAZZ_TEXT,
     "markdown": MSG_CLAZZ_MARKDOWN,
@@ -89,6 +97,7 @@ INBOUND_MSG_TYPE_TO_CLAZZ: Dict[str, str] = {
     "url": MSG_CLAZZ_URL,
     "news": MSG_CLAZZ_NEWS,
     "multimodal": MSG_CLAZZ_MULTIMODAL,
+    "actioncard": MSG_CLAZZ_ACTION_CARD,
 }
 
 
@@ -119,6 +128,73 @@ MSG_RECEIPT_SUBTYPES = frozenset({STATUS_TYPE_MSG}) | MSG_CONTENT_CLAZZES
 #: failed (see ``msg`` field for human reason).
 STATUS_OK = 100
 STATUS_FAIL = -1
+
+
+def build_action_card_button(
+    button_id: str,
+    label: str,
+    data: str,
+    style: str = "default",
+) -> Dict[str, Any]:
+    """One ActionCard button (layer ②/③ ``Button`` object)."""
+    btn: Dict[str, Any] = {
+        "id": str(button_id),
+        "label": str(label)[:20],
+        "data": str(data)[:256],
+    }
+    if style and style != "default":
+        btn["style"] = style
+    elif style == "default":
+        btn["style"] = "default"
+    return btn
+
+
+def build_action_card_content(
+    *,
+    text: str,
+    buttons: List[List[Dict[str, Any]]],
+    title: str = "",
+) -> Dict[str, Any]:
+    """Build ActionCard ``content`` for an outbound card (no ``selected``).
+
+    Raises ``ValueError`` if ``buttons`` is empty or exceeds
+    :data:`ACTION_CARD_MAX_BUTTONS`.
+    """
+    flat = [b for row in buttons for b in (row or [])]
+    if not flat:
+        raise ValueError("ActionCard requires at least one button")
+    if len(flat) > ACTION_CARD_MAX_BUTTONS:
+        raise ValueError(
+            f"ActionCard allows at most {ACTION_CARD_MAX_BUTTONS} buttons "
+            f"(got {len(flat)})"
+        )
+    content: Dict[str, Any] = {
+        "text": text or "",
+        "buttons": buttons,
+    }
+    if title:
+        content["title"] = title
+    return content
+
+
+def is_actioncard_tap_payload(
+    msg_type: str,
+    content: Optional[Dict[str, Any]],
+    quote: str,
+) -> bool:
+    """True when a robot-channel message is an ActionCard tap receipt.
+
+    Layer ② bridge requirement: ``msg_type=actioncard`` + ``selected``
+    object + non-empty ``quote``. Do not infer taps from Multimodal text.
+    """
+    if str(msg_type or "").lower() != "actioncard":
+        return False
+    if not quote:
+        return False
+    if not isinstance(content, dict):
+        return False
+    selected = content.get("selected")
+    return isinstance(selected, dict) and bool(selected)
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +764,23 @@ class RobotEventFrame:
         return self.msg_type == "multimodal" and bool(self.parts)
 
     @property
+    def is_actioncard_tap(self) -> bool:
+        """True when this event is an ActionCard button tap (not chat).
+
+        Must be handled via ``resolve_*`` — never as a normal
+        ``MessageEvent`` turn. See ``docs/chaoranxin/action-card-wire-protocol.md``.
+        """
+        return is_actioncard_tap_payload(
+            self.msg_type, self.content, self.quote
+        )
+
+    @property
+    def actioncard_selected(self) -> Dict[str, Any]:
+        """``content.selected`` on an ActionCard tap; empty dict otherwise."""
+        selected = self.content_field("selected")
+        return dict(selected) if isinstance(selected, dict) else {}
+
+    @property
     def combined_text(self) -> str:
         """Concatenate Multimodal ``text`` parts (joined by newlines)."""
         chunks: list = []
@@ -761,6 +854,7 @@ __all__ = [
     "MSG_CLAZZ_FILE", "MSG_CLAZZ_LOCAL_VIDEO", "MSG_CLAZZ_LOCAL_FILE",
     "MSG_CLAZZ_VOICE", "MSG_CLAZZ_AT",
     "MSG_CLAZZ_ARTICLE", "MSG_CLAZZ_URL", "MSG_CLAZZ_NEWS", "MSG_CLAZZ_MULTIMODAL",
+    "MSG_CLAZZ_ACTION_CARD", "ACTION_CARD_MAX_BUTTONS",
     "MSG_CONTENT_CLAZZES", "MSG_RECEIPT_SUBTYPES",
     "INBOUND_MSG_TYPE_TO_CLAZZ",
     "EVENT_MESSAGE_RECEIVE", "EVENT_BOT_ADDED", "EVENT_MESSAGE_READ",
@@ -772,6 +866,9 @@ __all__ = [
     # Type literals
     "TYPE_STATUS", "TYPE_ROBOT_EVENT", "TYPE_MSG", "TYPE_HEART",
     "TYPE_ROBOT_LOGIN", "KNOWN_TOP_LEVEL_TYPES",
+    # Helpers
+    "build_action_card_button", "build_action_card_content",
+    "is_actioncard_tap_payload",
     # Classes
     "OutboundMsg", "OutboundHeart",
     "IncomingFrame", "RobotLoginFrame", "StatusFrame", "RobotEventFrame",
