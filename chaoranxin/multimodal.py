@@ -21,6 +21,7 @@ from gateway.platforms.base import (
     cache_document_from_bytes,
     cache_image_from_url,
     cache_video_from_bytes,
+    safe_url_for_log,
 )
 from tools.url_safety import is_safe_url
 
@@ -89,7 +90,6 @@ def _nested_url(part: Dict[str, Any], key: str) -> Tuple[str, Dict[str, Any]]:
 
 
 async def _download_bytes(url: str) -> bytes:
-    from tools.url_safety import safe_url_for_log
     import httpx
 
     if not is_safe_url(url):
@@ -143,6 +143,18 @@ def _document_note(path: str, display: str, mime: str) -> str:
     )
 
 
+def _image_fail_note(reason: str, url: str = "") -> str:
+    """Visible context when an image_url part could not be materialized."""
+    detail = (reason or "unknown error").strip()
+    if url:
+        detail = f"{detail} (url={safe_url_for_log(url)})"
+    return (
+        "[The user sent an image but it could not be downloaded or decoded "
+        f"({detail}). Do not invent what the image contains — tell the user "
+        "you could not see it and ask them to resend if needed.]"
+    )
+
+
 def _choose_message_type(
     *,
     has_voice: bool,
@@ -181,8 +193,17 @@ async def materialize_parts(parts: List[Dict[str, Any]]) -> MaterializedMultimod
                 url, _nested = _nested_url(part, "image_url")
                 if not url:
                     logger.warning("[chaoranxin] image_url part missing url")
+                    notes.append(_image_fail_note("missing url"))
                     continue
-                path = await cache_image_from_url(url)
+                try:
+                    path = await cache_image_from_url(url)
+                except Exception as exc:
+                    logger.warning(
+                        "[chaoranxin] multimodal part type=image_url failed: %s",
+                        exc,
+                    )
+                    notes.append(_image_fail_note(str(exc), url))
+                    continue
                 mime = _guess_mime(url, "image/jpeg")
                 media_urls.append(path)
                 media_types.append(mime)
@@ -277,6 +298,9 @@ async def materialize_parts(parts: List[Dict[str, Any]]) -> MaterializedMultimod
                 ptype,
                 exc,
             )
+            if ptype == "image_url":
+                url, _ = _nested_url(part, "image_url")
+                notes.append(_image_fail_note(str(exc), url))
 
     msg_type = _choose_message_type(
         has_voice=has_voice,

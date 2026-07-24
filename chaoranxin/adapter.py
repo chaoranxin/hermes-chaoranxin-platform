@@ -1802,6 +1802,18 @@ class ChaoranxinAdapter(BasePlatformAdapter):
             _trace("DISPATCH", "drop: empty multimodal materialization")
             return
 
+        image_parts = sum(
+            1
+            for p in env.parts
+            if str(p.get("type") or "").lower().strip() == "image_url"
+        )
+        if image_parts and not materialized.media_urls:
+            logger.warning(
+                "[chaoranxin] multimodal event %s had %d image_url part(s) "
+                "but media_urls is empty (download/decode failed — see notes)",
+                env.message_id,
+                image_parts,
+            )
         chat_type = "group" if env.chat_type in ("group", "chat", "channel") else "dm"
         source = self.build_source(
             chat_id=env.chat_id,

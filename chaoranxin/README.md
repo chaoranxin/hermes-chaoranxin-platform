@@ -11,7 +11,7 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 
 ### 本目录需要哪些文件
 
-分发给用户时只需这 6 个文件（不要带 `__pycache__`）：
+分发给用户时只需这 7 个文件（不要带 `__pycache__`）：
 
 | 文件 | 作用 |
 |------|------|
@@ -19,7 +19,8 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 | `__init__.py` | 导出 `register` |
 | `adapter.py` | 适配器主逻辑 |
 | `proto.py` | WS 帧编解码 |
-| `media.py` | 图片上传（`d.xsign.co` objectstorage） |
+| `multimodal.py` | 入站 Multimodal parts 物化（下载图/音/视/文件） |
+| `media.py` | 出站图片上传（`d.xsign.co` objectstorage） |
 | `README.md` | 本说明 |
 
 安装后目标路径：
@@ -29,6 +30,7 @@ A Hermes platform plugin for the **Chaoranxin (超然信)** custom
 ├── __init__.py
 ├── adapter.py
 ├── proto.py
+├── multimodal.py
 ├── media.py
 ├── plugin.yaml
 └── README.md
@@ -137,7 +139,7 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 | Capability | Status |
 |---|---|
 | Auto node discovery (`GET /im/api/v1/robot/servers`) | ✅ with 1× retry on transport / non-2xx |
-| Inbound Multimodal (text / voice_url / audio_url / image_url / video_url / file) | ✅ **only** uplink shape — legacy Text/Markdown/Voice/Picture inbound is dropped |
+| Inbound Multimodal (text / voice_url / audio_url / image_url / video_url / file) | ✅ **only** uplink shape — all user→bot messages are Multimodal; legacy Text/Markdown/Voice/Picture inbound is dropped |
 | Outbound text messages | ✅ |
 | Outbound Picture | ✅ 先上传再发图片消息（与文字同通道） |
 | Outbound Article / Url / News | ✅ via `OutboundMsg.set_clazz()` (manual / programmatic) |
@@ -189,9 +191,11 @@ Quick summary:
     legacy `Msg` subtype; `status=100` accepted, `status=-1` rejected)
   - `RobotEvent` — user message.  Feishu-schema-2.0 envelope with
     `header.event_type = "im.message.receive_v1"`.
-    **Uplink must be Multimodal** (`msg_type: "multimodal"`,
+    **All uplink is Multimodal** (`msg_type: "multimodal"`,
     `content.parts` non-empty). Legacy `text` / `markdown` / `voice` /
     `picture` inbound is **not** accepted (logged and dropped).
+    Image parts use `image_url`; if download/decode fails, a visible
+    failure note is injected so the model does not invent image content.
 
 ### Inbound Multimodal parts
 
@@ -201,6 +205,10 @@ Quick summary:
 | Hold-to-talk | Mic | `{ "type": "voice_url", "voice_url": { "url": "…", "size": N } }` | STT (`VOICE`) |
 | Pick audio file | More panel | `{ "type": "audio_url", "audio_url": { "url": "…" } }` | attachment note, **no** STT |
 | Image / video / file | More panel | `image_url` / `video_url` / `file` | vision / path notes |
+
+> **Direction asymmetry:** uplink (user→bot) is always Multimodal parts.
+> Downlink (bot→user) still uses content-type frames (`Markdown`,
+> `Picture`, …) — see outbound section above.
 
 Example:
 
@@ -319,13 +327,12 @@ tests/gateway/test_chaoranxin_plugin.py
   failed (`msg` carries the reason, e.g. `发送方必须为当前登录机器人`).
 * **Dedup** — `event_id` keyed with a 24h TTL + 4096-entry hard cap,
   matching the openclaw convention used elsewhere in Hermes.
-* **Message classes** — Markdown / Text / At → `MessageType.TEXT`; Picture →
-  `MessageType.PHOTO`; Video → `MessageType.VIDEO`; Voice →
-  `MessageType.VOICE`; File / Article / Url / News →
-  `MessageType.DOCUMENT`.  Non-text events carry the raw envelope on
-  `MessageEvent.raw_message["robot_event"]` so the agent layer can
-  inspect Picture URLs / Article bodies / @-targets without us
-  needing per-clazz fields.
+* **Inbound message classes** — uplink is Multimodal-only. Parts map
+  to Hermes types: plain `text` → `TEXT`; sole `image_url` → `PHOTO`;
+  sole `voice_url` → `VOICE`; mixed / `audio_url` / `video_url` /
+  `file` → `TEXT` with media paths and/or attachment notes. Legacy
+  `text` / `picture` / `voice` envelopes are dropped. The raw
+  `RobotEvent` is kept on `MessageEvent.raw_message["robot_event"]`.
 
 ## Troubleshooting
 
