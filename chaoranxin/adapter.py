@@ -1739,8 +1739,15 @@ class ChaoranxinAdapter(BasePlatformAdapter):
 
         # ActionCard tap (layer ②) — resolve approval/clarify/slash; never
         # treat as a Multimodal chat turn (would wake the agent wrongly).
-        # Requires non-empty quote (original card uuid) + selected.
+        # Detect via msg_type=actioncard + selected; quote preferred but
+        # optional (RobotEvent bridge often omits message.quote).
         if env.is_actioncard_tap:
+            if not env.quote:
+                logger.info(
+                    "[chaoranxin] ActionCard tap missing message.quote "
+                    "(resolving via selected.data only) event_id=%s",
+                    env.event_id,
+                )
             await self._handle_actioncard_tap(
                 selected=env.actioncard_selected,
                 chat_id=env.chat_id,

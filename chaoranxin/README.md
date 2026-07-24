@@ -155,7 +155,7 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 | Fatal-on-handshake-error (401/403/404) | ✅ |
 | HTTP push (`/bot/api/v1/message/push`) | ❌ — not implemented in v1 (out of scope: WS-only mode) |
 | HTTP Hook callback (HMAC-SHA256) | ❌ — not implemented in v1 (out of scope: WS-only mode) |
-| ActionCard (approval / clarify / slash-confirm) | ✅ 出站 `type=ActionCard`；入站需带 **`quote`（原卡 uuid）** + `selected`：`RobotEvent`(`msg_type=actioncard`) 或顶层 `type=ActionCard` 帧 → `resolve_*`（**不当**普通对话）。协议见 Hermes 树 `docs/chaoranxin/action-card-wire-protocol.md` |
+| ActionCard (approval / clarify / slash-confirm) | ✅ 出站 `type=ActionCard`；入站 `msg_type=actioncard` + `selected` → `resolve_*`（`quote` 有则带上，现网 RobotEvent 常缺仍可 resolve）。协议见 Hermes 树 `docs/chaoranxin/action-card-wire-protocol.md` |
 
 ## Wire Protocol
 
