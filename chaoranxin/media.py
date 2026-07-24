@@ -1,12 +1,12 @@
-"""Chaoranxin (超然信) outbound image upload helpers.
+"""Chaoranxin (超然信) outbound media upload helpers.
 
 Per ``ROBOT_THIRD_PARTY.md`` §6.2 / §6.3:
 
 1. ``POST {file_base}/objectstorage/upload`` with ``bizType=im``,
    ``accessLevel=PUBLIC``, and ``Authorization: Bearer rbt_*``.
-2. Use ``data.accessUrl`` for both ``Picture.content.smallurl`` and
-   ``originurl`` (must be identical).
-3. Send a WS ``type=Picture`` frame (handled by the adapter).
+2. Use ``data.accessUrl`` in the platform content object for the clazz.
+3. Send a WS content-type frame (``Picture`` / ``Voice`` / ``LocalVideo`` /
+   ``LocalFile``) — handled by the adapter.
 
 Absolute imports only — the plugin test loader may register modules
 without a package parent.
@@ -32,6 +32,8 @@ BIZ_TYPE_IM = "im"
 ACCESS_LEVEL_PUBLIC = "PUBLIC"
 
 IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+VIDEO_EXTS = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"})
+VOICE_EXTS = frozenset({".ogg", ".opus", ".mp3", ".wav", ".m4a", ".flac"})
 
 
 def resolve_file_base(
@@ -70,6 +72,52 @@ def build_picture_content(
     return content
 
 
+def build_voice_content(
+    access_url: str,
+    size: Union[str, int],
+) -> Dict[str, str]:
+    """Build Voice ``content`` — ``url`` + ``size`` (byte count as string)."""
+    url = (access_url or "").strip()
+    if not url:
+        raise ValueError("access_url is required for Voice content")
+    return {"url": url, "size": str(size)}
+
+
+def build_localvideo_content(
+    access_url: str,
+    *,
+    cover: str = "",
+) -> Dict[str, str]:
+    """Build LocalVideo ``content`` — ``video`` + ``cover`` (not Video.url)."""
+    url = (access_url or "").strip()
+    if not url:
+        raise ValueError("access_url is required for LocalVideo content")
+    return {"video": url, "cover": str(cover or "")}
+
+
+def build_localfile_content(
+    access_url: str,
+    filename: str,
+    filesize: Union[str, int],
+) -> Dict[str, Any]:
+    """Build LocalFile ``content`` — ``fileurl`` / ``filename`` / ``filesize`` int."""
+    url = (access_url or "").strip()
+    if not url:
+        raise ValueError("access_url is required for LocalFile content")
+    name = (filename or "").strip() or "file"
+    try:
+        size_int = int(filesize)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"filesize must be an integer, got {filesize!r}") from exc
+    if size_int < 0:
+        raise ValueError(f"filesize must be >= 0, got {size_int}")
+    return {
+        "fileurl": url,
+        "filename": name,
+        "filesize": size_int,
+    }
+
+
 def is_file_service_oss_url(url: str, file_base: Optional[str] = None) -> bool:
     """Return True when ``url`` is already a stable ``{file_base}/oss/{id}`` link."""
     raw = (url or "").strip()
@@ -94,6 +142,33 @@ def is_file_service_oss_url(url: str, file_base: Optional[str] = None) -> bool:
 def is_image_path(path: str) -> bool:
     """True when ``path`` has a known image extension."""
     return Path(path).suffix.lower() in IMAGE_EXTS
+
+
+def is_video_path(path: str) -> bool:
+    """True when ``path`` has a known video extension."""
+    return Path(path).suffix.lower() in VIDEO_EXTS
+
+
+def is_voice_path(path: str) -> bool:
+    """True when ``path`` has a known audio/voice extension."""
+    return Path(path).suffix.lower() in VOICE_EXTS
+
+
+def classify_media_path(path: str, *, is_voice: bool = False) -> str:
+    """Classify a local path for outbound clazz routing.
+
+    Returns one of: ``\"picture\"``, ``\"voice\"``, ``\"localvideo\"``, ``\"localfile\"``.
+    ``is_voice=True`` wins over extension heuristics (gateway voice flag).
+    """
+    if is_voice:
+        return "voice"
+    if is_image_path(path):
+        return "picture"
+    if is_video_path(path):
+        return "localvideo"
+    if is_voice_path(path):
+        return "voice"
+    return "localfile"
 
 
 def probe_image_size(data: bytes) -> Tuple[Optional[int], Optional[int]]:
@@ -155,13 +230,13 @@ def _guess_filename(path: Optional[str], content_type: Optional[str] = None) -> 
         name = Path(path).name
         if name:
             return name
-    ext = mimetypes.guess_extension(content_type or "") or ".jpg"
+    ext = mimetypes.guess_extension(content_type or "") or ".bin"
     if ext == ".jpe":
         ext = ".jpg"
-    return f"image{ext}"
+    return f"file{ext}"
 
 
-async def upload_public_image(
+async def upload_public_file(
     token: str,
     source: Union[str, bytes, bytearray, memoryview],
     *,
@@ -170,18 +245,18 @@ async def upload_public_image(
     content_type: Optional[str] = None,
     timeout: float = 60.0,
 ) -> str:
-    """Upload image bytes/path to object storage; return PUBLIC ``accessUrl``.
+    """Upload bytes/path to object storage; return PUBLIC ``accessUrl``.
 
     Raises ``RuntimeError`` on transport / protocol failure.
     """
     try:
         import httpx
     except ImportError as exc:
-        raise RuntimeError("chaoranxin image upload requires httpx") from exc
+        raise RuntimeError("chaoranxin media upload requires httpx") from exc
 
     token = (token or "").strip()
     if not token:
-        raise RuntimeError("chaoranxin image upload: missing bot token")
+        raise RuntimeError("chaoranxin media upload: missing bot token")
 
     base = (file_base or DEFAULT_FILE_BASE).rstrip("/")
     url = f"{base}{UPLOAD_PATH}"
@@ -192,12 +267,12 @@ async def upload_public_image(
     else:
         path = Path(str(source))
         if not path.is_file():
-            raise RuntimeError(f"chaoranxin image upload: file not found: {path}")
+            raise RuntimeError(f"chaoranxin media upload: file not found: {path}")
         data = path.read_bytes()
         name = filename or path.name
 
     if not data:
-        raise RuntimeError("chaoranxin image upload: empty file")
+        raise RuntimeError("chaoranxin media upload: empty file")
 
     mime = content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
     headers = {"Authorization": f"Bearer {token}"}
@@ -211,24 +286,24 @@ async def upload_public_image(
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, headers=headers, data=form, files=files)
     except Exception as exc:
-        raise RuntimeError(f"chaoranxin image upload transport error: {exc}") from exc
+        raise RuntimeError(f"chaoranxin media upload transport error: {exc}") from exc
 
     try:
         body = resp.json()
     except Exception as exc:
         raise RuntimeError(
-            f"chaoranxin image upload: non-JSON response HTTP {resp.status_code}"
+            f"chaoranxin media upload: non-JSON response HTTP {resp.status_code}"
         ) from exc
 
     if resp.status_code >= 400:
         raise RuntimeError(
-            f"chaoranxin image upload HTTP {resp.status_code}: "
+            f"chaoranxin media upload HTTP {resp.status_code}: "
             f"{body.get('msg') or body}"
         )
 
     if body.get("code") != 0:
         raise RuntimeError(
-            f"chaoranxin image upload failed: {body.get('msg') or body}"
+            f"chaoranxin media upload failed: {body.get('msg') or body}"
         )
 
     payload = body.get("data") or {}
@@ -236,13 +311,54 @@ async def upload_public_image(
     access_level = (payload.get("accessLevel") or "").strip()
     if access_level and access_level != ACCESS_LEVEL_PUBLIC:
         raise RuntimeError(
-            f"chaoranxin image upload: expected accessLevel=PUBLIC, got {access_level!r}"
+            f"chaoranxin media upload: expected accessLevel=PUBLIC, got {access_level!r}"
         )
     if not access_url:
         raise RuntimeError(
-            "chaoranxin image upload: accessUrl missing; require accessLevel=PUBLIC"
+            "chaoranxin media upload: accessUrl missing; require accessLevel=PUBLIC"
         )
     return access_url
+
+
+async def upload_public_image(
+    token: str,
+    source: Union[str, bytes, bytearray, memoryview],
+    *,
+    filename: Optional[str] = None,
+    file_base: Optional[str] = None,
+    content_type: Optional[str] = None,
+    timeout: float = 60.0,
+) -> str:
+    """Upload image bytes/path; thin wrapper around :func:`upload_public_file`."""
+    return await upload_public_file(
+        token,
+        source,
+        filename=filename,
+        file_base=file_base,
+        content_type=content_type,
+        timeout=timeout,
+    )
+
+
+async def upload_local_file(
+    token: str,
+    file_path: str,
+    *,
+    file_base: Optional[str] = None,
+    filename: Optional[str] = None,
+    content_type: Optional[str] = None,
+) -> Tuple[str, int]:
+    """Upload a local file; return ``(access_url, size_bytes)``."""
+    path = Path(file_path)
+    data = path.read_bytes()
+    access_url = await upload_public_file(
+        token,
+        data,
+        filename=filename or path.name,
+        file_base=file_base,
+        content_type=content_type,
+    )
+    return access_url, len(data)
 
 
 async def upload_local_image(

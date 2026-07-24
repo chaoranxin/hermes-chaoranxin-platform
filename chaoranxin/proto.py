@@ -51,8 +51,10 @@ from typing import Any, Dict, List, Optional, Union
 MSG_CLAZZ_MARKDOWN = "Markdown"
 MSG_CLAZZ_TEXT = "Text"
 MSG_CLAZZ_PICTURE = "Picture"
-MSG_CLAZZ_VIDEO = "Video"
-MSG_CLAZZ_FILE = "File"
+MSG_CLAZZ_VIDEO = "Video"  # legacy inbound mirror only — do not outbound
+MSG_CLAZZ_FILE = "File"  # legacy inbound mirror only — do not outbound
+MSG_CLAZZ_LOCAL_VIDEO = "LocalVideo"  # robot video outbound (platform model)
+MSG_CLAZZ_LOCAL_FILE = "LocalFile"  # robot file outbound (platform model)
 MSG_CLAZZ_VOICE = "Voice"
 MSG_CLAZZ_AT = "At"
 MSG_CLAZZ_ARTICLE = "Article"
@@ -62,10 +64,12 @@ MSG_CLAZZ_MULTIMODAL = "Multimodal"
 
 #: All outbound content clazz values (top-level ``type`` must match ``clazz``).
 #: ``Multimodal`` is inbound-only for the robot uplink; listed so receipts
-#: that echo the clazz are recognized.
+#: that echo the clazz are recognized. ``LocalVideo`` / ``LocalFile`` are
+#: the platform IM types for robot media outbound (not ``Video`` / ``File``).
 MSG_CONTENT_CLAZZES = frozenset({
     MSG_CLAZZ_MARKDOWN, MSG_CLAZZ_TEXT, MSG_CLAZZ_PICTURE, MSG_CLAZZ_VIDEO,
-    MSG_CLAZZ_FILE, MSG_CLAZZ_VOICE, MSG_CLAZZ_AT, MSG_CLAZZ_ARTICLE,
+    MSG_CLAZZ_FILE, MSG_CLAZZ_LOCAL_VIDEO, MSG_CLAZZ_LOCAL_FILE,
+    MSG_CLAZZ_VOICE, MSG_CLAZZ_AT, MSG_CLAZZ_ARTICLE,
     MSG_CLAZZ_URL, MSG_CLAZZ_NEWS, MSG_CLAZZ_MULTIMODAL,
 })
 
@@ -754,7 +758,8 @@ class RobotEventFrame:
 __all__ = [
     # Constants
     "MSG_CLAZZ_MARKDOWN", "MSG_CLAZZ_TEXT", "MSG_CLAZZ_PICTURE", "MSG_CLAZZ_VIDEO",
-    "MSG_CLAZZ_FILE", "MSG_CLAZZ_VOICE", "MSG_CLAZZ_AT",
+    "MSG_CLAZZ_FILE", "MSG_CLAZZ_LOCAL_VIDEO", "MSG_CLAZZ_LOCAL_FILE",
+    "MSG_CLAZZ_VOICE", "MSG_CLAZZ_AT",
     "MSG_CLAZZ_ARTICLE", "MSG_CLAZZ_URL", "MSG_CLAZZ_NEWS", "MSG_CLAZZ_MULTIMODAL",
     "MSG_CONTENT_CLAZZES", "MSG_RECEIPT_SUBTYPES",
     "INBOUND_MSG_TYPE_TO_CLAZZ",

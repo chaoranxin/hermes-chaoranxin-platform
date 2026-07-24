@@ -142,8 +142,10 @@ CHAORANXIN_ALLOWED_USERS=uuid1,uuid2
 | Inbound Multimodal (text / voice_url / audio_url / image_url / video_url / file) | ✅ **only** uplink shape — all user→bot messages are Multimodal; legacy Text/Markdown/Voice/Picture inbound is dropped |
 | Outbound text messages | ✅ |
 | Outbound Picture | ✅ 先上传再发图片消息（与文字同通道） |
+| Outbound Voice | ✅ 先上传再发 `Voice`（`content.url` + `content.size` 字符串） |
+| Outbound LocalVideo | ✅ 先上传再发 `LocalVideo`（`content.video` + `content.cover`；**不是** `Video`） |
+| Outbound LocalFile | ✅ 先上传再发 `LocalFile`（`fileurl` / `filename` / `filesize` 整数；**不是** `File`） |
 | Outbound Article / Url / News | ✅ via `OutboundMsg.set_clazz()` (manual / programmatic) |
-| Outbound Video / File / Voice | ❌ — not implemented yet |
 | Outbound @-mentions | ✅ via `OutboundMsg.ats` |
 | Reply quoting | ⚠️ **off by default** — opt in via `extra.send_quote: true` / `CHAORANXIN_SEND_QUOTE=true` |
 | RobotLogin handshake (§3.3) | ✅ (robot uuid + owner captured into `_robot_uuid`) |
@@ -184,6 +186,15 @@ Quick summary:
     default `https://d.xsign.co`), then
     `{type:"Picture", data:{clazz:"Picture", content:{smallurl,originurl,...}, ...}}`
     (`smallurl` and `originurl` must be the same `accessUrl`).
+  - Voice — same upload, then
+    `{type:"Voice", data:{clazz:"Voice", content:{url, size}, ...}}`
+    (`size` is the byte count as a **string**).
+  - LocalVideo — same upload, then
+    `{type:"LocalVideo", data:{clazz:"LocalVideo", content:{video, cover}, ...}}`
+    (`video` = `accessUrl`; `cover` may be `""`. Do **not** send `type:"Video"`.)
+  - LocalFile — same upload, then
+    `{type:"LocalFile", data:{clazz:"LocalFile", content:{fileurl, filename, filesize}, ...}}`
+    (`filesize` is a JSON **integer**. Do **not** send `type:"File"`.)
   - `Data<Heart>` — `{type:"Heart", data:{time:<ms>}}`
 * Inbound:
   - `RobotLogin` — handshake binding (`ok`, `robot`, `owner`, `msg`)
