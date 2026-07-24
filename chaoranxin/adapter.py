@@ -118,6 +118,7 @@ from plugins.platforms.chaoranxin.proto import (  # noqa: E402
     MSG_CLAZZ_PICTURE,
     MSG_CLAZZ_VOICE,
     TYPE_ROBOT_LOGIN,
+    ActionCardInboundFrame,
     IncomingFrame,
     NodeEndpoint,
     OutboundHeart,
@@ -1420,6 +1421,7 @@ class ChaoranxinAdapter(BasePlatformAdapter):
           * ``RobotLogin`` → bind robot uuid + owner (spec §3.3)
           * ``Status``     → heartbeat echo / send receipt
           * ``RobotEvent`` → forward user message to the agent
+          * ``ActionCard`` → tap receipt with ``data.quote`` (IM Msg shape)
         """
         _trace("RX", "_recv_loop enter")
         async for raw in ws:
@@ -1444,6 +1446,10 @@ class ChaoranxinAdapter(BasePlatformAdapter):
             elif frame.is_robot_event:
                 await self._dispatch_robot_event(
                     RobotEventFrame.parse(frame)
+                )
+            elif frame.is_actioncard:
+                await self._dispatch_actioncard_inbound(
+                    ActionCardInboundFrame.parse(frame)
                 )
 
     # ----- RobotLogin dispatch (spec §3.3) -----
@@ -1733,11 +1739,65 @@ class ChaoranxinAdapter(BasePlatformAdapter):
 
         # ActionCard tap (layer ②) — resolve approval/clarify/slash; never
         # treat as a Multimodal chat turn (would wake the agent wrongly).
+        # Requires non-empty quote (original card uuid) + selected.
         if env.is_actioncard_tap:
-            await self._handle_actioncard_tap(env)
+            await self._handle_actioncard_tap(
+                selected=env.actioncard_selected,
+                chat_id=env.chat_id,
+                quote=env.quote,
+                event_id=env.event_id,
+            )
             return
 
         await self._deliver(env)
+
+    async def _dispatch_actioncard_inbound(
+        self, card: ActionCardInboundFrame
+    ) -> None:
+        """Handle top-level ``type=ActionCard`` frames (IM Msg shape).
+
+        Tap receipts carry ``data.quote`` (original card uuid) and
+        ``data.content.selected``. Card echoes without ``selected`` are
+        ignored. Dedup uses ``data.uuid`` when present.
+        """
+        if not card.is_tap:
+            _trace(
+                "DISPATCH",
+                "drop: ActionCard inbound not a tap",
+                uuid=card.uuid or None,
+                quote=card.quote or None,
+                has_selected=bool(card.selected),
+            )
+            return
+
+        dedup_key = card.uuid or f"actioncard-tap:{card.quote}:{card.selected.get('data')}"
+        if self._is_duplicate(dedup_key):
+            _trace("DISPATCH", "drop: duplicate ActionCard tap", uuid=dedup_key)
+            return
+
+        # Self-echo: robot should not resolve its own card frames.
+        my_id = self._robot_uuid or self._bot_id_fallback
+        if my_id and card.from_id == my_id:
+            _trace(
+                "DISPATCH",
+                "drop: ActionCard self-echo",
+                from_id=card.from_id,
+            )
+            return
+
+        if not self._is_authorized(card.from_id):
+            logger.info(
+                "[chaoranxin] ActionCard tap sender %s not in allowlist — dropping",
+                card.from_id,
+            )
+            return
+
+        await self._handle_actioncard_tap(
+            selected=card.selected,
+            chat_id=card.chat_id,
+            quote=card.quote,
+            event_id=card.uuid,
+        )
 
     def _is_duplicate(self, event_id: str) -> bool:
         """LRU-bounded dedup keyed by ``event_id``.
@@ -2185,16 +2245,26 @@ class ChaoranxinAdapter(BasePlatformAdapter):
             )
         return result
 
-    async def _handle_actioncard_tap(self, env: RobotEventFrame) -> None:
-        """Resolve an ActionCard tap without waking a chat turn."""
-        selected = env.actioncard_selected
+    async def _handle_actioncard_tap(
+        self,
+        *,
+        selected: Dict[str, Any],
+        chat_id: str,
+        quote: str,
+        event_id: str = "",
+    ) -> None:
+        """Resolve an ActionCard tap without waking a chat turn.
+
+        ``quote`` is the original card uuid (required by the tap detector).
+        Command identity still comes from ``selected.data`` (``ea:``/``sc:``/``cl:``).
+        """
         data = str(selected.get("data") or "")
-        chat_id = env.chat_id
         _trace(
             "DISPATCH",
             "actioncard tap",
             chat_id=chat_id,
-            quote=env.quote or None,
+            quote=quote or None,
+            event_id=event_id or None,
             selected_id=selected.get("id"),
             callback=data[:80] if data else None,
         )
@@ -2209,7 +2279,7 @@ class ChaoranxinAdapter(BasePlatformAdapter):
                 "[chaoranxin] ActionCard tap with unknown callback data=%r "
                 "quote=%s",
                 data[:120],
-                env.quote,
+                quote,
             )
 
     async def _resolve_actioncard_ea(self, data: str, chat_id: str) -> None:

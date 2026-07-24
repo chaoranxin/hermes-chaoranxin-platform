@@ -430,10 +430,13 @@ TYPE_ROBOT_EVENT = "RobotEvent"
 TYPE_MSG = "Msg"
 TYPE_HEART = "Heart"
 TYPE_ROBOT_LOGIN = "RobotLogin"  # standalone per spec §3.3
+#: Inbound tap may arrive as a content-type frame (IM Msg shape) with
+#: ``data.quote`` + ``content.selected`` — not only as RobotEvent.
+TYPE_ACTION_CARD = MSG_CLAZZ_ACTION_CARD
 
 
 KNOWN_TOP_LEVEL_TYPES = frozenset(
-    {TYPE_STATUS, TYPE_ROBOT_EVENT, TYPE_ROBOT_LOGIN}
+    {TYPE_STATUS, TYPE_ROBOT_EVENT, TYPE_ROBOT_LOGIN, TYPE_ACTION_CARD}
 )
 
 
@@ -503,6 +506,11 @@ class IncomingFrame:
     @property
     def is_robot_login(self) -> bool:
         return self.top_type == TYPE_ROBOT_LOGIN
+
+    @property
+    def is_actioncard(self) -> bool:
+        """True for top-level ``type=ActionCard`` (IM content-type frame)."""
+        return self.top_type == TYPE_ACTION_CARD
 
     def __bool__(self) -> bool:
         return not self.is_empty
@@ -800,7 +808,16 @@ class RobotEventFrame:
 
     @property
     def quote(self) -> str:
-        return str(self.message.get("quote") or "")
+        """Original card uuid on an ActionCard tap (layer ②/③ ``quote``).
+
+        Reads ``message.quote`` first; also accepts a top-level ``quote`` on
+        the event object if the bridge nests it there.
+        """
+        q = self.message.get("quote")
+        if q:
+            return str(q)
+        q = self.event.get("quote")
+        return str(q) if q else ""
 
     # ----- sender / chat -----
 
@@ -848,6 +865,67 @@ class RobotEventFrame:
         return bool(self.header or self.event or self.schema_version)
 
 
+
+# ---------------------------------------------------------------------------
+# Inbound — top-level ActionCard (IM content-type frame with quote)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ActionCardInboundFrame:
+    """Inbound ``{"type":"ActionCard","data":{...}}`` (IM Msg shape).
+
+    Used when the platform pushes a tap as a content-type frame carrying
+    ``data.quote`` + ``data.content.selected`` (not only via RobotEvent).
+    """
+
+    uuid: str = ""
+    from_id: str = ""
+    to_id: str = ""
+    role: str = ""
+    quote: str = ""
+    content: Dict[str, Any] = field(default_factory=dict)
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def parse(cls, frame: IncomingFrame) -> "ActionCardInboundFrame":
+        if not frame.is_actioncard:
+            return cls()
+        d = frame.data
+        content = d.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        return cls(
+            uuid=str(d.get("uuid") or ""),
+            from_id=str(d.get("from") or ""),
+            to_id=str(d.get("to") or ""),
+            role=str(d.get("role") or ""),
+            quote=str(d.get("quote") or ""),
+            content=dict(content),
+            raw=dict(d),
+        )
+
+    @property
+    def is_tap(self) -> bool:
+        """True when this frame is a user tap (selected + non-empty quote)."""
+        return is_actioncard_tap_payload(
+            "actioncard", self.content, self.quote
+        )
+
+    @property
+    def selected(self) -> Dict[str, Any]:
+        selected = self.content.get("selected")
+        return dict(selected) if isinstance(selected, dict) else {}
+
+    @property
+    def chat_id(self) -> str:
+        """Peer to reply to: user uuid on a user→robot tap (``from``)."""
+        return self.from_id
+
+    def __bool__(self) -> bool:
+        return bool(self.uuid or self.from_id or self.content or self.quote)
+
+
 __all__ = [
     # Constants
     "MSG_CLAZZ_MARKDOWN", "MSG_CLAZZ_TEXT", "MSG_CLAZZ_PICTURE", "MSG_CLAZZ_VIDEO",
@@ -862,15 +940,13 @@ __all__ = [
     "STATUS_TYPE_ROBOT_LOGIN", "STATUS_TYPE_HEART", "STATUS_TYPE_MSG",
     "STATUS_OK", "STATUS_FAIL",
     "TYPE_STATUS", "TYPE_ROBOT_EVENT", "TYPE_MSG", "TYPE_HEART",
-    "KNOWN_TOP_LEVEL_TYPES",
-    # Type literals
-    "TYPE_STATUS", "TYPE_ROBOT_EVENT", "TYPE_MSG", "TYPE_HEART",
-    "TYPE_ROBOT_LOGIN", "KNOWN_TOP_LEVEL_TYPES",
+    "TYPE_ROBOT_LOGIN", "TYPE_ACTION_CARD", "KNOWN_TOP_LEVEL_TYPES",
     # Helpers
     "build_action_card_button", "build_action_card_content",
     "is_actioncard_tap_payload",
     # Classes
     "OutboundMsg", "OutboundHeart",
     "IncomingFrame", "RobotLoginFrame", "StatusFrame", "RobotEventFrame",
+    "ActionCardInboundFrame",
     "NodeEndpoint", "parse_node_list",
 ]
