@@ -199,10 +199,7 @@ Quick summary:
     unsafe, or failed downloads get a visible failure note so the
     model does not invent image content. For native main-model vision,
     set `model.supports_vision: true` (or leave `agent.image_input_mode`
-    as `auto`). A plugin `pre_tool_call` hook blocks redundant
-    `vision_analyze` calls whose `image_url` is under the inbound
-    `image_cache` / `cache/images` directory (already inlined by
-    Gateway); remote URLs and non-cache paths are left alone.
+    as `auto`).
 
 ### Inbound Multimodal parts
 
@@ -298,7 +295,6 @@ plugins/platforms/chaoranxin/
 ├── __init__.py          # re-export register()
 ├── plugin.yaml          # manifest (requires_env, optional_env)
 ├── adapter.py           # ChaoranxinAdapter + register(ctx) entry
-├── vision_guard.py      # block vision_analyze on inbound image_cache paths
 ├── proto.py             # OutboundMsg / IncomingFrame / StatusFrame
 │                        # / RobotEventFrame / NodeEndpoint / parse_node_list
 └── README.md            # this file

@@ -2638,13 +2638,6 @@ def register(ctx) -> None:
     except Exception:
         logger.debug("[chaoranxin] endpoint env migration skipped", exc_info=True)
 
-    try:
-        from plugins.platforms.chaoranxin.vision_guard import register_hooks
-
-        register_hooks(ctx)
-    except Exception:
-        logger.debug("[chaoranxin] vision_guard hooks not registered", exc_info=True)
-
     ctx.register_platform(
         name="chaoranxin",
         label="Chaoranxin (超然信 rbt_* WS Bot)",
