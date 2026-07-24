@@ -3,6 +3,10 @@
 Robot uplink is Multimodal-only: ``msg_type=multimodal`` + ``content.parts``.
 Maps parts onto Hermes ``MessageEvent`` fields (text, media_urls, media_types)
 plus attachment context notes for non-STT audio / video / files.
+
+Image parts follow the DingTalk pattern: pass the remote ``image_url`` through
+in ``media_urls`` (no local cache). Gateway text/vision routing downloads it.
+Voice / video / file parts are still downloaded to local cache.
 """
 
 from __future__ import annotations
@@ -19,7 +23,6 @@ from gateway.platforms.base import (
     MessageType,
     cache_audio_from_url,
     cache_document_from_bytes,
-    cache_image_from_url,
     cache_video_from_bytes,
     safe_url_for_log,
 )
@@ -30,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MaterializedMultimodal:
-    """Result of downloading/decoding Multimodal parts."""
+    """Result of materializing Multimodal parts (URLs and/or local paths)."""
 
     text: str = ""
     message_type: MessageType = MessageType.TEXT
@@ -144,12 +147,12 @@ def _document_note(path: str, display: str, mime: str) -> str:
 
 
 def _image_fail_note(reason: str, url: str = "") -> str:
-    """Visible context when an image_url part could not be materialized."""
+    """Visible context when an image_url part could not be passed through."""
     detail = (reason or "unknown error").strip()
     if url:
         detail = f"{detail} (url={safe_url_for_log(url)})"
     return (
-        "[The user sent an image but it could not be downloaded or decoded "
+        "[The user sent an image but it could not be used "
         f"({detail}). Do not invent what the image contains — tell the user "
         "you could not see it and ask them to resend if needed.]"
     )
@@ -171,7 +174,10 @@ def _choose_message_type(
 
 
 async def materialize_parts(parts: List[Dict[str, Any]]) -> MaterializedMultimodal:
-    """Download / decode Multimodal parts into local paths + notes."""
+    """Materialize Multimodal parts into MessageEvent fields + notes.
+
+    Images: remote URL passthrough (DingTalk-style). Other media: local cache.
+    """
     text_chunks: List[str] = []
     media_urls: List[str] = []
     media_types: List[str] = []
@@ -195,17 +201,21 @@ async def materialize_parts(parts: List[Dict[str, Any]]) -> MaterializedMultimod
                     logger.warning("[chaoranxin] image_url part missing url")
                     notes.append(_image_fail_note("missing url"))
                     continue
-                try:
-                    path = await cache_image_from_url(url)
-                except Exception as exc:
+                if not is_safe_url(url):
                     logger.warning(
-                        "[chaoranxin] multimodal part type=image_url failed: %s",
-                        exc,
+                        "[chaoranxin] image_url blocked by SSRF guard: %s",
+                        safe_url_for_log(url),
                     )
-                    notes.append(_image_fail_note(str(exc), url))
+                    notes.append(
+                        _image_fail_note(
+                            "Blocked unsafe URL (SSRF protection)",
+                            url,
+                        )
+                    )
                     continue
                 mime = _guess_mime(url, "image/jpeg")
-                media_urls.append(path)
+                # Pass remote URL through — gateway vision/text routing fetches it.
+                media_urls.append(url)
                 media_types.append(mime)
                 has_image = True
                 continue

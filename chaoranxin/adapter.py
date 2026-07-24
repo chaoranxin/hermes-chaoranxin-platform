@@ -1810,7 +1810,7 @@ class ChaoranxinAdapter(BasePlatformAdapter):
         if image_parts and not materialized.media_urls:
             logger.warning(
                 "[chaoranxin] multimodal event %s had %d image_url part(s) "
-                "but media_urls is empty (download/decode failed — see notes)",
+                "but media_urls is empty (missing/unsafe url — see notes)",
                 env.message_id,
                 image_parts,
             )
