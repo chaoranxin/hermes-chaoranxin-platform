@@ -4,9 +4,9 @@ Robot uplink is Multimodal-only: ``msg_type=multimodal`` + ``content.parts``.
 Maps parts onto Hermes ``MessageEvent`` fields (text, media_urls, media_types)
 plus attachment context notes for non-STT audio / video / files.
 
-Image parts follow the DingTalk pattern: pass the remote ``image_url`` through
-in ``media_urls`` (no local cache). Gateway text/vision routing downloads it.
-Voice / video / file parts are still downloaded to local cache.
+Image parts are downloaded to local cache (WeChat-style) so Gateway native
+vision can attach them via ``Path.exists()``. Voice / video / file parts are
+also cached locally.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from gateway.platforms.base import (
     MessageType,
     cache_audio_from_url,
     cache_document_from_bytes,
+    cache_image_from_url,
     cache_video_from_bytes,
     safe_url_for_log,
 )
@@ -147,7 +148,7 @@ def _document_note(path: str, display: str, mime: str) -> str:
 
 
 def _image_fail_note(reason: str, url: str = "") -> str:
-    """Visible context when an image_url part could not be passed through."""
+    """Visible context when an image_url part could not be downloaded."""
     detail = (reason or "unknown error").strip()
     if url:
         detail = f"{detail} (url={safe_url_for_log(url)})"
@@ -174,10 +175,7 @@ def _choose_message_type(
 
 
 async def materialize_parts(parts: List[Dict[str, Any]]) -> MaterializedMultimodal:
-    """Materialize Multimodal parts into MessageEvent fields + notes.
-
-    Images: remote URL passthrough (DingTalk-style). Other media: local cache.
-    """
+    """Download / decode Multimodal parts into local paths + notes."""
     text_chunks: List[str] = []
     media_urls: List[str] = []
     media_types: List[str] = []
@@ -213,9 +211,17 @@ async def materialize_parts(parts: List[Dict[str, Any]]) -> MaterializedMultimod
                         )
                     )
                     continue
+                try:
+                    path = await cache_image_from_url(url)
+                except Exception as exc:
+                    logger.warning(
+                        "[chaoranxin] multimodal part type=image_url failed: %s",
+                        exc,
+                    )
+                    notes.append(_image_fail_note(str(exc), url))
+                    continue
                 mime = _guess_mime(url, "image/jpeg")
-                # Pass remote URL through — gateway vision/text routing fetches it.
-                media_urls.append(url)
+                media_urls.append(path)
                 media_types.append(mime)
                 has_image = True
                 continue

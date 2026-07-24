@@ -194,13 +194,12 @@ Quick summary:
     **All uplink is Multimodal** (`msg_type: "multimodal"`,
     `content.parts` non-empty). Legacy `text` / `markdown` / `voice` /
     `picture` inbound is **not** accepted (logged and dropped).
-    Image parts use `image_url`; the remote URL is passed through to
-    Hermes (DingTalk-style, no local cache). Gateway text/vision
-    routing fetches it. Missing or unsafe URLs get a visible failure
-    note so the model does not invent image content. For reliable
-    recognition with remote URLs, keep `model.supports_vision: false`
-    or set `agent.image_input_mode: text` (native mode treats URLs as
-    local paths and skips them).
+    Image parts use `image_url`; the plugin downloads to local cache
+    (WeChat-style) and passes the path in `media_urls`. Missing,
+    unsafe, or failed downloads get a visible failure note so the
+    model does not invent image content. For native main-model vision,
+    set `model.supports_vision: true` (or leave `agent.image_input_mode`
+    as `auto`).
 
 ### Inbound Multimodal parts
 
@@ -209,7 +208,7 @@ Quick summary:
 | Plain text | Composer | `{ "type": "text", "text": "…" }` | user text |
 | Hold-to-talk | Mic | `{ "type": "voice_url", "voice_url": { "url": "…", "size": N } }` | STT (`VOICE`) |
 | Pick audio file | More panel | `{ "type": "audio_url", "audio_url": { "url": "…" } }` | attachment note, **no** STT |
-| Image | More panel | `image_url` | remote URL → gateway vision (text mode) |
+| Image | More panel | `image_url` | download → local path → native/text vision |
 | Video / file | More panel | `video_url` / `file` | local path notes |
 
 > **Direction asymmetry:** uplink (user→bot) is always Multimodal parts.
@@ -335,7 +334,7 @@ tests/gateway/test_chaoranxin_plugin.py
   matching the openclaw convention used elsewhere in Hermes.
 * **Inbound message classes** — uplink is Multimodal-only. Parts map
   to Hermes types: plain `text` → `TEXT`; sole `image_url` → `PHOTO`
-  with the remote URL in `media_urls` (not downloaded by the plugin);
+  with a local cached path in `media_urls` (downloaded by the plugin);
   sole `voice_url` → `VOICE`; mixed / `audio_url` / `video_url` /
   `file` → `TEXT` with media paths and/or attachment notes. Legacy
   `text` / `picture` / `voice` envelopes are dropped. The raw
@@ -343,11 +342,12 @@ tests/gateway/test_chaoranxin_plugin.py
 
 ## Troubleshooting
 
-* **Image recognition wrong / empty** — inbound images are remote
-  URLs. Set `model.supports_vision: false` and/or
-  `agent.image_input_mode: text` so Gateway runs `vision_analyze` on
-  the URL. With `supports_vision: true` (native), HTTPS URLs are
-  skipped as non-local paths.
+* **Image recognition wrong / empty** — inbound images are downloaded
+  to local cache then attached. Prefer `model.supports_vision: true`
+  (native main-model vision). If native is off, Gateway uses
+  `vision_analyze` / `auxiliary.vision` instead — that path needs a
+  working vision provider. Check gateway logs for
+  `Image routing: native` and `Image attached at: …/image_cache/…`.
 * **`Node discovery failed` on startup** — the
   `GET /im/api/v1/robot/servers` call failed twice (after one 1s
   retry).  Check the API base URL, the token, and the network path
