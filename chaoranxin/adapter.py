@@ -92,11 +92,9 @@ from gateway.platforms.base import (
     SendResult,
 )
 
-# Absolute imports (not ``from .proto``) — the plugin's test loader
-# registers this module under ``plugin_adapter_chaoranxin`` at the
-# top level, so a relative import would fail with
-# ``ImportError: attempted relative import with no known parent package``.
-from plugins.platforms.chaoranxin.media import (  # noqa: E402
+# Relative imports for ~/.hermes/plugins/chaoranxin user-plugin load
+# (Hermes imports as hermes_plugins.chaoranxin_platform.*).
+from .media import (  # noqa: E402
     IMAGE_EXTS,
     build_localfile_content,
     build_localvideo_content,
@@ -109,7 +107,7 @@ from plugins.platforms.chaoranxin.media import (  # noqa: E402
     upload_local_file,
     upload_local_image,
 )
-from plugins.platforms.chaoranxin.proto import (  # noqa: E402
+from .proto import (  # noqa: E402
     EVENT_MESSAGE_RECEIVE,
     MSG_CLAZZ_ACTION_CARD,
     MSG_CLAZZ_LOCAL_FILE,
@@ -948,13 +946,17 @@ class ChaoranxinAdapter(BasePlatformAdapter):
                 self._api_base,
             )
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         """Open the WebSocket, wait for RobotLogin, then return.
+
+        ``is_reconnect`` is accepted for BasePlatformAdapter compatibility;
+        Chaoranxin has no server-side update queue to preserve on reconnect.
 
         Returns ``True`` only after the server sends a successful RobotLogin
         frame (robot uuid bound).  Until then the gateway must not treat the
         platform as connected — ``is_connected`` also requires ``_robot_uuid``.
         """
+        _ = is_reconnect
         _trace(
             "LIFECYCLE",
             "connect() enter",
@@ -1739,15 +1741,8 @@ class ChaoranxinAdapter(BasePlatformAdapter):
 
         # ActionCard tap (layer ②) — resolve approval/clarify/slash; never
         # treat as a Multimodal chat turn (would wake the agent wrongly).
-        # Detect via msg_type=actioncard + selected; quote preferred but
-        # optional (RobotEvent bridge often omits message.quote).
+        # Requires non-empty quote (original card uuid) + selected.
         if env.is_actioncard_tap:
-            if not env.quote:
-                logger.info(
-                    "[chaoranxin] ActionCard tap missing message.quote "
-                    "(resolving via selected.data only) event_id=%s",
-                    env.event_id,
-                )
             await self._handle_actioncard_tap(
                 selected=env.actioncard_selected,
                 chat_id=env.chat_id,
@@ -1882,7 +1877,7 @@ class ChaoranxinAdapter(BasePlatformAdapter):
             )
             return
 
-        from plugins.platforms.chaoranxin.multimodal import materialize_parts
+        from .multimodal import materialize_parts
 
         materialized = await materialize_parts(env.parts)
         text = materialized.final_text

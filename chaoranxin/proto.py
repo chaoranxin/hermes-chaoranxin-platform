@@ -180,18 +180,17 @@ def build_action_card_content(
 def is_actioncard_tap_payload(
     msg_type: str,
     content: Optional[Dict[str, Any]],
-    quote: str = "",
+    quote: str,
 ) -> bool:
     """True when a robot-channel message is an ActionCard tap receipt.
 
-    Requires ``msg_type=actioncard`` and a ``selected`` object.
-    ``quote`` (original card uuid) is preferred when the bridge supplies it,
-    but is **not** required for detection — existing RobotEvent uplinks often
-    omit ``message.quote`` even when the IM Msg has ``data.quote``. Command
-    identity comes from ``selected.data`` (``ea:`` / ``sc:`` / ``cl:``).
+    Layer ② bridge requirement: ``msg_type=actioncard`` + ``selected``
+    object + non-empty ``quote`` (original card uuid). Do not infer taps
+    from Multimodal text.
     """
-    _ = quote  # optional; kept in signature for callers / logging
     if str(msg_type or "").lower() != "actioncard":
+        return False
+    if not quote:
         return False
     if not isinstance(content, dict):
         return False
@@ -909,11 +908,7 @@ class ActionCardInboundFrame:
 
     @property
     def is_tap(self) -> bool:
-        """True when this frame is a user tap (``content.selected`` present).
-
-        ``quote`` is preferred but not required for detection (same as
-        RobotEvent path).
-        """
+        """True when this frame is a user tap (selected + non-empty quote)."""
         return is_actioncard_tap_payload(
             "actioncard", self.content, self.quote
         )
